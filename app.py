@@ -2,12 +2,18 @@ import streamlit as st
 
 st.set_page_config(
     page_title="가구부문통계조사 챗봇",
-    page_icon="📚"
+    page_icon="📚",
+    layout="wide"
 )
 
 st.title("📚 가구부문통계조사 챗봇")
 
-st.write("가구부문 통계조사 업무자료를 검색하고 질문할 수 있는 챗봇입니다.")
+st.write(
+    "가구부문 통계조사 업무자료를 검색하고 "
+    "질문할 수 있는 챗봇입니다."
+)
+
+st.divider()
 
 question = st.text_input(
     "질문을 입력하세요",

@@ -7,4 +7,4 @@ onnxruntime
 numpy
 requests
 sentence-transformers
-google-genai>=2.19.0
+google-genai>=2.21.0

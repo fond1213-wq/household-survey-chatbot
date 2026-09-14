@@ -94,6 +94,13 @@ GEMINI_API_KEY = GEMINI_API_KEY.strip()
 
 
 # ============================================================
+# ⚙️ 사용할 Gemini 모델 (고정)
+# ============================================================
+
+GEMINI_MODEL = "gemini-3.5-flash-lite"
+
+
+# ============================================================
 # 🗂️ 세션 상태 초기화 (업로드 파일 보존)
 # ============================================================
 
@@ -124,12 +131,12 @@ def get_gemini_client():
 
 def call_gemini(
     question: str,
-    model: str = "gemini-3.5-flash-lite",
+    model: str = GEMINI_MODEL,
     system_prompt: str = None,
 ) -> str:
     """
     Gemini API를 호출하여 답변을 반환합니다.
-    model은 'gemini-3.5-flash-lite' 형식으로 지정합니다.
+    기본 모델: gemini-3.5-flash-lite
     """
     if system_prompt is None:
         system_prompt = (
@@ -174,45 +181,27 @@ def list_gemini_models() -> dict:
         return {"ok": False, "models": [], "error": repr(e)}
 
 
-def test_gemini_models() -> dict:
-    """여러 모델명으로 실제 호출을 시도하여 작동하는 모델을 찾습니다."""
-    client = get_gemini_client()
-
-    # 2026년 9월 기준 최신 Gemini 모델
-    candidates = [
-        "gemini-3.5-flash-lite",
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-2.5-flash",
-    ]
-
-    results = []
-    for model_name in candidates:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents="ping",
-            )
-            results.append({
-                "model": model_name,
-                "ok": True,
-                "message": response.text[:80],
-                "error": None,
-            })
-        except Exception as e:
-            results.append({
-                "model": model_name,
-                "ok": False,
-                "message": None,
-                "error": repr(e)[:200],
-            })
-
-    return {
-        "ok": any(r["ok"] for r in results),
-        "results": results,
-    }
+def test_gemini_model() -> dict:
+    """현재 설정된 모델로 테스트 호출을 수행합니다."""
+    try:
+        client = get_gemini_client()
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents="ping",
+        )
+        return {
+            "ok": True,
+            "model": GEMINI_MODEL,
+            "message": response.text[:100],
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "model": GEMINI_MODEL,
+            "message": None,
+            "error": repr(e),
+        }
 
 
 # ============================================================
@@ -366,6 +355,9 @@ with st.sidebar:
     else:
         st.error("❌ RapidOCR 지원 안 됨")
 
+    st.write("**AI 모델**")
+    st.code(GEMINI_MODEL)
+
     st.divider()
 
     # ========================================================
@@ -387,6 +379,9 @@ with st.sidebar:
 
         st.write("Gemini API 키 길이")
         st.code(str(len(GEMINI_API_KEY)) if GEMINI_API_KEY else "0")
+
+        st.write("Gemini 모델")
+        st.code(GEMINI_MODEL)
 
         if OCR_SUPPORT:
             st.success("RapidOCR import 성공")
@@ -410,24 +405,17 @@ with st.sidebar:
             st.error("모델 목록 조회 실패")
             st.code(result["error"])
 
-    # --- 모델 자동 테스트 버튼 ---
-    if st.button("🔑 모델 자동 테스트", use_container_width=True):
-        with st.spinner("여러 모델로 테스트 중..."):
-            result = test_gemini_models()
+    # --- 모델 테스트 버튼 ---
+    if st.button("🔑 모델 테스트", use_container_width=True):
+        with st.spinner(f"{GEMINI_MODEL} 테스트 중..."):
+            result = test_gemini_model()
 
         if result["ok"]:
-            st.success("✅ 작동하는 모델을 찾았습니다")
+            st.success(f"✅ {result['model']} 정상 작동")
+            st.caption(f"응답: {result['message']}")
         else:
-            st.error("❌ 모든 모델 호출 실패")
-
-        for r in result["results"]:
-            if r["ok"]:
-                st.success(f"✅ {r['model']}")
-                st.caption(f"응답: {r['message']}")
-            else:
-                st.warning(f"❌ {r['model']}")
-                with st.expander(f"오류 상세 - {r['model']}"):
-                    st.code(r["error"])
+            st.error(f"❌ {result['model']} 호출 실패")
+            st.code(result["error"])
 
 
 # ============================================================
@@ -437,23 +425,7 @@ with st.sidebar:
 if menu == "질문하기":
     st.subheader("💬 질문하기")
 
-    # 2026년 9월 기준 최신 Gemini 모델 선택 옵션
-    MODEL_OPTIONS = [
-        "gemini-3.5-flash-lite",
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-    ]
-
-    selected_model = st.selectbox(
-        "🤖 사용할 모델",
-        MODEL_OPTIONS,
-        index=0,
-        help="404 오류 발생 시 다른 모델명을 선택해 보세요."
-    )
+    st.info(f"🤖 사용 모델: **{GEMINI_MODEL}**")
 
     question = st.text_area(
         "궁금한 내용을 입력하세요.",
@@ -473,9 +445,9 @@ if menu == "질문하기":
 
     if ask_clicked:
         if question.strip():
-            with st.spinner(f"{selected_model} 모델로 답변 생성 중..."):
+            with st.spinner(f"{GEMINI_MODEL} 모델로 답변 생성 중..."):
                 try:
-                    answer = call_gemini(question, model=selected_model)
+                    answer = call_gemini(question, model=GEMINI_MODEL)
 
                     st.session_state.chat_history.append(
                         {"role": "user", "content": question}
@@ -492,7 +464,7 @@ if menu == "질문하기":
                     st.code(repr(e))
 
                     with st.expander("🔧 오류 진단"):
-                        st.write("사용한 모델:", selected_model)
+                        st.write("사용한 모델:", GEMINI_MODEL)
                         st.write(
                             "키 앞 8자리:",
                             GEMINI_API_KEY[:8] if GEMINI_API_KEY else "없음"
@@ -500,9 +472,8 @@ if menu == "질문하기":
                         st.info(
                             "404 오류가 계속되면:\n"
                             "1. 사이드바의 '📋 모델 목록 확인' 버튼으로 실제 모델명 확인\n"
-                            "2. '🔑 모델 자동 테스트' 버튼으로 작동하는 모델 찾기\n"
-                            "3. 위 선택박스에서 다른 모델명 선택 후 재시도\n"
-                            "4. google-genai 패키지가 최신인지 확인 (>=2.21.0)"
+                            "2. '🔑 모델 테스트' 버튼으로 현재 모델 작동 확인\n"
+                            "3. google-genai 패키지가 최신인지 확인 (>=2.21.0)"
                         )
         else:
             st.warning("질문을 입력해주세요.")

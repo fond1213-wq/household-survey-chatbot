@@ -2,3 +2,5 @@ streamlit
 pypdf
 pillow
 pillow-heif
+rapidocr
+onnxruntime

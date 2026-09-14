@@ -6,3 +6,5 @@ rapidocr>=3.9.2
 onnxruntime
 numpy
 requests
+sentence-transformers
+openai

@@ -8,3 +8,4 @@ numpy
 requests
 sentence-transformers
 google-genai>=2.21.0
+supabase

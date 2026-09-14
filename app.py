@@ -134,7 +134,7 @@ def get_supabase():
 
 
 # ============================================================
-# ☁️ Supabase Storage 유틸 (한글 파일명 안전 처리)
+# ☁️ Supabase Storage 유틸
 # ============================================================
 
 CATEGORY_PDF = "pdfs"
@@ -143,7 +143,6 @@ CATEGORY_IMAGE = "images"
 
 
 def _make_safe_key(file_name: str) -> str:
-    """원본 파일명을 ASCII 전용 UUID 키로 변환합니다."""
     ext = ""
     if "." in file_name:
         ext = "." + file_name.rsplit(".", 1)[-1].lower()
@@ -151,12 +150,6 @@ def _make_safe_key(file_name: str) -> str:
 
 
 def upload_to_storage(file_bytes: bytes, file_name: str, category: str):
-    """
-    파일을 Supabase Storage에 업로드합니다.
-    한글 파일명은 InvalidKey 오류를 일으키므로 UUID 키로 변환하고,
-    원본 파일명은 메타데이터에 저장합니다.
-    반환: (safe_key, original_name)
-    """
     supabase = get_supabase()
     safe_key = _make_safe_key(file_name)
     path = f"{category}/{safe_key}"
@@ -174,10 +167,6 @@ def upload_to_storage(file_bytes: bytes, file_name: str, category: str):
 
 
 def list_storage(category: str):
-    """
-    특정 카테고리의 파일 목록을 반환합니다.
-    반환 형식: [{"key": "uuid.pdf", "original_name": "원본.pdf"}, ...]
-    """
     supabase = get_supabase()
     try:
         items = supabase.storage.from_(SUPABASE_BUCKET).list(category)
@@ -201,16 +190,12 @@ def list_storage(category: str):
         else:
             original_name = key
 
-        result.append({
-            "key": key,
-            "original_name": original_name,
-        })
+        result.append({"key": key, "original_name": original_name})
 
     return result
 
 
 def download_from_storage(category: str, safe_key: str) -> bytes:
-    """Storage에서 파일을 다운로드하여 bytes로 반환합니다."""
     supabase = get_supabase()
     return supabase.storage.from_(SUPABASE_BUCKET).download(
         f"{category}/{safe_key}"
@@ -218,7 +203,6 @@ def download_from_storage(category: str, safe_key: str) -> bytes:
 
 
 def delete_from_storage(category: str, safe_key: str):
-    """Storage에서 파일을 삭제합니다."""
     supabase = get_supabase()
     supabase.storage.from_(SUPABASE_BUCKET).remove(
         [f"{category}/{safe_key}"]
@@ -226,7 +210,6 @@ def delete_from_storage(category: str, safe_key: str):
 
 
 def load_all_files_from_storage():
-    """세 카테고리의 모든 파일을 세션 상태에 로드합니다."""
     for category, session_key in [
         (CATEGORY_PDF, "saved_pdfs"),
         (CATEGORY_TXT, "saved_txts"),
@@ -260,6 +243,9 @@ if "saved_images" not in st.session_state:
 if "ocr_results" not in st.session_state:
     st.session_state.ocr_results = {}
 
+if "pdf_texts" not in st.session_state:
+    st.session_state.pdf_texts = {}
+
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -276,6 +262,91 @@ if "storage_loaded" not in st.session_state:
 
 
 # ============================================================
+# 📄 PDF 텍스트 추출 (캐시)
+# ============================================================
+
+def extract_pdf_text(pdf_bytes: bytes) -> str:
+    """PDF에서 전체 텍스트를 추출합니다."""
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        full_text = ""
+        for page_number, page in enumerate(reader.pages, start=1):
+            text = page.extract_text()
+            if text:
+                full_text += f"\n\n===== 페이지 {page_number} =====\n\n"
+                full_text += text
+        return full_text
+    except Exception as e:
+        return f"[PDF 파싱 오류: {e}]"
+
+
+def get_pdf_text_cached(name: str, pdf_bytes: bytes) -> str:
+    """세션 캐시를 활용하여 PDF 텍스트를 반환합니다."""
+    if name not in st.session_state.pdf_texts:
+        st.session_state.pdf_texts[name] = extract_pdf_text(pdf_bytes)
+    return st.session_state.pdf_texts[name]
+
+
+# ============================================================
+# 📚 문서 컨텍스트 빌더 (RAG 핵심)
+# ============================================================
+
+def build_document_context(max_chars: int = 400_000) -> str:
+    """
+    업로드된 모든 문서(PDF, TXT, 이미지 OCR)의 텍스트를
+    하나의 컨텍스트 문자열로 결합합니다.
+    """
+    parts = []
+    total = 0
+
+    # --- PDF ---
+    for name, pdf_bytes in st.session_state.saved_pdfs.items():
+        text = get_pdf_text_cached(name, pdf_bytes)
+        if not text.strip():
+            continue
+        block = f"\n\n========== [PDF 문서: {name}] ==========\n{text}"
+        if total + len(block) > max_chars:
+            block = block[: max_chars - total]
+        parts.append(block)
+        total += len(block)
+        if total >= max_chars:
+            break
+
+    # --- TXT ---
+    if total < max_chars:
+        for name, content_bytes in st.session_state.saved_txts.items():
+            try:
+                try:
+                    content = content_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    content = content_bytes.decode("cp949")
+            except Exception:
+                continue
+            block = f"\n\n========== [TXT 문서: {name}] ==========\n{content}"
+            if total + len(block) > max_chars:
+                block = block[: max_chars - total]
+            parts.append(block)
+            total += len(block)
+            if total >= max_chars:
+                break
+
+    # --- 이미지 OCR 결과 ---
+    if total < max_chars:
+        for key, text in st.session_state.ocr_results.items():
+            if not text.strip():
+                continue
+            block = f"\n\n========== [이미지 OCR: {key}] ==========\n{text}"
+            if total + len(block) > max_chars:
+                block = block[: max_chars - total]
+            parts.append(block)
+            total += len(block)
+            if total >= max_chars:
+                break
+
+    return "".join(parts)
+
+
+# ============================================================
 # 🤖 Gemini 클라이언트
 # ============================================================
 
@@ -287,26 +358,39 @@ def get_gemini_client():
 def call_gemini(
     question: str,
     model: str = GEMINI_MODEL,
+    context: str = None,
     system_prompt: str = None,
 ) -> str:
+    """
+    Gemini API를 호출합니다.
+    context가 주어지면 문서 기반 답변을 생성합니다.
+    """
     if system_prompt is None:
         system_prompt = (
             "당신은 가구부문 통계조사 업무를 돕는 AI 어시스턴트입니다.\n"
-            "**반드시 아래 등록된 지침서 내용을 기반으로만 답변하세요.**\n"
-            "- 2026년 경제활동인구조사 지침서\n"
-            "- 2024년 가계동향조사 지침서\n\n"
-            "등록된 자료에 없는 내용은 추측하지 말고 "
+            "**반드시 아래 제공된 문서 내용을 기반으로만 답변하세요.**\n"
+            "등록된 문서에 없는 내용은 추측하지 말고 "
             "'등록된 지침서에서 해당 내용을 찾을 수 없습니다'라고 답변하세요.\n"
-            "한국어로 정확하게 답변해주세요."
+            "여러 문서가 제공된 경우, 질문과 가장 관련 있는 문서를 우선 참고하세요.\n"
+            "한국어로 정확하고 친절하게 답변해주세요."
         )
+
+    if context and context.strip():
+        full_prompt = (
+            f"[참고 문서]\n{context}\n\n"
+            f"---\n\n"
+            f"[질문]\n{question}"
+        )
+    else:
+        full_prompt = question
 
     client = get_gemini_client()
     response = client.models.generate_content(
         model=model,
-        contents=question,
+        contents=full_prompt,
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
-            temperature=0.7,
+            temperature=0.3,
             max_output_tokens=2000,
         ),
     )
@@ -465,9 +549,6 @@ st.caption(
     "질문에 답변하는 AI 챗봇"
 )
 
-# ------------------------------------------------------------
-# ⚠️ 답변 범위 안내 (빨간색 강조 배너)
-# ------------------------------------------------------------
 st.markdown(
     """
     <div style="
@@ -483,9 +564,6 @@ st.markdown(
             font-weight: 800;
             color: #B71C1C;
             margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
         ">
             ⚠️ 답변 범위 안내
         </div>
@@ -546,6 +624,13 @@ with st.sidebar:
     st.write("**AI 모델**")
     st.code(GEMINI_MODEL)
 
+    # 문서 현황 요약
+    st.write("**등록된 문서**")
+    st.write(f"- PDF: {len(st.session_state.saved_pdfs)}개")
+    st.write(f"- TXT: {len(st.session_state.saved_txts)}개")
+    st.write(f"- 사진: {len(st.session_state.saved_images)}개")
+    st.write(f"- OCR 결과: {len(st.session_state.ocr_results)}개")
+
     st.divider()
 
     with st.expander("🔧 시스템 진단"):
@@ -591,6 +676,7 @@ with st.sidebar:
         st.session_state.saved_txts = {}
         st.session_state.saved_images = {}
         st.session_state.ocr_results = {}
+        st.session_state.pdf_texts = {}
         st.session_state.storage_keys = {}
         st.session_state.storage_loaded = False
         st.rerun()
@@ -603,6 +689,17 @@ with st.sidebar:
 if menu == "질문하기":
     st.subheader("💬 질문하기")
     st.info(f"🤖 사용 모델: **{GEMINI_MODEL}**")
+
+    # 현재 등록된 문서 정보 표시
+    doc_count = (
+        len(st.session_state.saved_pdfs)
+        + len(st.session_state.saved_txts)
+        + len(st.session_state.ocr_results)
+    )
+    if doc_count > 0:
+        st.success(f"📚 현재 {doc_count}개의 문서가 등록되어 있습니다. 문서 기반으로 답변합니다.")
+    else:
+        st.warning("⚠️ 등록된 문서가 없습니다. '자료관리' 탭에서 자료를 먼저 등록해주세요.")
 
     question = st.text_area(
         "궁금한 내용을 입력하세요.",
@@ -622,7 +719,13 @@ if menu == "질문하기":
         if question.strip():
             with st.spinner(f"{GEMINI_MODEL} 모델로 답변 생성 중..."):
                 try:
-                    answer = call_gemini(question, model=GEMINI_MODEL)
+                    # 모든 문서를 컨텍스트로 결합
+                    context = build_document_context()
+                    answer = call_gemini(
+                        question,
+                        model=GEMINI_MODEL,
+                        context=context if context.strip() else None,
+                    )
                     st.session_state.chat_history.append(
                         {"role": "user", "content": question}
                     )
@@ -631,6 +734,12 @@ if menu == "질문하기":
                     )
                     st.success("답변")
                     st.write(answer)
+
+                    with st.expander("📄 참고한 문서 정보"):
+                        st.write(f"컨텍스트 길이: {len(context):,}자")
+                        st.write(f"PDF: {len(st.session_state.saved_pdfs)}개")
+                        st.write(f"TXT: {len(st.session_state.saved_txts)}개")
+                        st.write(f"OCR: {len(st.session_state.ocr_results)}개")
                 except Exception as e:
                     st.error("Gemini 호출 중 오류가 발생했습니다.")
                     st.code(repr(e))
@@ -684,11 +793,38 @@ elif menu == "자료관리":
                 st.session_state.storage_keys[
                     f"{CATEGORY_PDF}/{original}"
                 ] = safe_key
+                # PDF 텍스트 캐시 생성
+                if original not in st.session_state.pdf_texts:
+                    st.session_state.pdf_texts[original] = extract_pdf_text(data)
             except Exception as e:
                 st.error(f"{f.name} 업로드 실패: {e}")
 
+    # PDF 목록 + 개별 삭제
     if st.session_state.saved_pdfs:
         st.caption(f"📦 저장된 PDF: {len(st.session_state.saved_pdfs)}개")
+
+        for name in list(st.session_state.saved_pdfs.keys()):
+            col_name, col_del = st.columns([5, 1])
+            with col_name:
+                text_len = len(st.session_state.pdf_texts.get(name, ""))
+                st.write(f"📄 **{name}** ({text_len:,}자 추출됨)")
+            with col_del:
+                if st.button("🗑️", key=f"del_pdf_{name}", help="이 PDF 삭제"):
+                    try:
+                        safe_key = st.session_state.storage_keys.get(
+                            f"{CATEGORY_PDF}/{name}"
+                        )
+                        if safe_key:
+                            delete_from_storage(CATEGORY_PDF, safe_key)
+                    except Exception:
+                        pass
+                    st.session_state.saved_pdfs.pop(name, None)
+                    st.session_state.pdf_texts.pop(name, None)
+                    st.session_state.storage_keys.pop(
+                        f"{CATEGORY_PDF}/{name}", None
+                    )
+                    st.rerun()
+
         if st.button("🗑️ PDF 전체 삭제", key="clear_pdfs"):
             for name in list(st.session_state.saved_pdfs.keys()):
                 try:
@@ -700,6 +836,7 @@ elif menu == "자료관리":
                 except Exception:
                     pass
             st.session_state.saved_pdfs = {}
+            st.session_state.pdf_texts = {}
             st.rerun()
 
     # --------------------------------------------------------
@@ -730,6 +867,27 @@ elif menu == "자료관리":
 
     if st.session_state.saved_txts:
         st.caption(f"📦 저장된 TXT: {len(st.session_state.saved_txts)}개")
+
+        for name in list(st.session_state.saved_txts.keys()):
+            col_name, col_del = st.columns([5, 1])
+            with col_name:
+                st.write(f"📝 **{name}**")
+            with col_del:
+                if st.button("🗑️", key=f"del_txt_{name}", help="이 TXT 삭제"):
+                    try:
+                        safe_key = st.session_state.storage_keys.get(
+                            f"{CATEGORY_TXT}/{name}"
+                        )
+                        if safe_key:
+                            delete_from_storage(CATEGORY_TXT, safe_key)
+                    except Exception:
+                        pass
+                    st.session_state.saved_txts.pop(name, None)
+                    st.session_state.storage_keys.pop(
+                        f"{CATEGORY_TXT}/{name}", None
+                    )
+                    st.rerun()
+
         if st.button("🗑️ TXT 전체 삭제", key="clear_txts"):
             for name in list(st.session_state.saved_txts.keys()):
                 try:
@@ -747,10 +905,6 @@ elif menu == "자료관리":
     # 이미지 업로더
     # --------------------------------------------------------
     st.markdown("### 📷 사진 자료")
-    st.write(
-        "JPG, JPEG, PNG, WEBP, HEIC, HEIF 등 이미지 파일을 "
-        "선택할 수 있습니다."
-    )
     image_files = st.file_uploader(
         "사진 파일을 선택하세요.",
         type=["jpg", "jpeg", "png", "webp", "heic", "heif", "bmp"],
@@ -775,6 +929,31 @@ elif menu == "자료관리":
 
     if st.session_state.saved_images:
         st.caption(f"📦 저장된 사진: {len(st.session_state.saved_images)}개")
+
+        for name in list(st.session_state.saved_images.keys()):
+            col_name, col_del = st.columns([5, 1])
+            with col_name:
+                st.write(f"📷 **{name}**")
+            with col_del:
+                if st.button("🗑️", key=f"del_img_{name}", help="이 사진 삭제"):
+                    try:
+                        safe_key = st.session_state.storage_keys.get(
+                            f"{CATEGORY_IMAGE}/{name}"
+                        )
+                        if safe_key:
+                            delete_from_storage(CATEGORY_IMAGE, safe_key)
+                    except Exception:
+                        pass
+                    st.session_state.saved_images.pop(name, None)
+                    st.session_state.storage_keys.pop(
+                        f"{CATEGORY_IMAGE}/{name}", None
+                    )
+                    # 관련 OCR 결과도 삭제
+                    for k in list(st.session_state.ocr_results.keys()):
+                        if name in k:
+                            st.session_state.ocr_results.pop(k, None)
+                    st.rerun()
+
         if st.button("🗑️ 사진 전체 삭제", key="clear_images"):
             for name in list(st.session_state.saved_images.keys()):
                 try:
@@ -795,13 +974,15 @@ elif menu == "자료관리":
     st.divider()
     st.subheader("📊 업로드 현황")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("📄 PDF", len(st.session_state.saved_pdfs))
     with col2:
         st.metric("📝 TXT", len(st.session_state.saved_txts))
     with col3:
         st.metric("📷 사진", len(st.session_state.saved_images))
+    with col4:
+        st.metric("🔎 OCR", len(st.session_state.ocr_results))
 
     # --------------------------------------------------------
     # PDF 내용 확인
@@ -812,17 +993,8 @@ elif menu == "자료관리":
 
         for name, pdf_bytes in st.session_state.saved_pdfs.items():
             try:
+                full_text = get_pdf_text_cached(name, pdf_bytes)
                 reader = PdfReader(io.BytesIO(pdf_bytes))
-                full_text = ""
-                for page_number, page in enumerate(reader.pages, start=1):
-                    text = page.extract_text()
-                    if text:
-                        full_text += (
-                            "\n\n"
-                            f"===== 페이지 {page_number} ====="
-                            "\n\n"
-                        )
-                        full_text += text
 
                 with st.expander(f"📄 {name}"):
                     if full_text.strip():
@@ -833,7 +1005,8 @@ elif menu == "자료관리":
                             key=f"pdf_text_{name}"
                         )
                         st.success(
-                            f"{len(reader.pages)}페이지에서 텍스트를 추출했습니다."
+                            f"{len(reader.pages)}페이지, "
+                            f"{len(full_text):,}자 추출됨"
                         )
                     else:
                         st.warning("PDF에서 텍스트를 찾지 못했습니다.")
@@ -879,7 +1052,7 @@ elif menu == "자료관리":
         for index, (name, image_bytes) in enumerate(
             st.session_state.saved_images.items()
         ):
-            with st.expander(f"📷 {name}", expanded=True):
+            with st.expander(f"📷 {name}", expanded=False):
                 col_a, col_b, col_c = st.columns(3)
                 with col_a:
                     st.write("**파일명**")

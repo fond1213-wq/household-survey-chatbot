@@ -139,6 +139,16 @@ elif menu == "자료관리":
       max_upload_size=50
     )
 
+    st.markdown("### 📷 사진 자료")
+
+    if image_files:
+       st.success(f"사진 {len(image_files)}개가 업로드되었습니다.")
+
+       for file in image_files:
+         st.write("파일명:", file.name)
+         st.write("파일 형식:", file.type)
+         st.write("파일 크기:", f"{file.size / 1024 / 1024:.2f} MB")
+
 
     # ========================================================
     # 업로드 현황

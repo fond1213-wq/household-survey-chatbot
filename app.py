@@ -124,12 +124,12 @@ def get_gemini_client():
 
 def call_gemini(
     question: str,
-    model: str = "gemini-2.5-flash",
+    model: str = "gemini-3.5-flash-lite",
     system_prompt: str = None,
 ) -> str:
     """
     Gemini API를 호출하여 답변을 반환합니다.
-    model은 'gemini-2.5-flash' 또는 'models/gemini-2.5-flash' 형식 모두 지원합니다.
+    model은 'gemini-3.5-flash-lite' 형식으로 지정합니다.
     """
     if system_prompt is None:
         system_prompt = (
@@ -166,7 +166,6 @@ def list_gemini_models() -> dict:
         available = []
         for m in models:
             name = getattr(m, "name", "")
-            # generateContent를 지원하는 모델만 필터링
             if "gemini" in name.lower():
                 available.append(name)
 
@@ -179,18 +178,14 @@ def test_gemini_models() -> dict:
     """여러 모델명으로 실제 호출을 시도하여 작동하는 모델을 찾습니다."""
     client = get_gemini_client()
 
-    # 모델명 형식 후보 (models/ 접두사 포함/미포함, 최신 모델명)
+    # 2026년 9월 기준 최신 Gemini 모델
     candidates = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.1-flash-lite",
         "gemini-2.5-flash",
-        "models/gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "models/gemini-2.5-flash-lite",
-        "gemini-2.5-pro",
-        "models/gemini-2.5-pro",
-        "gemini-2.0-flash",
-        "models/gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "models/gemini-2.0-flash-lite",
     ]
 
     results = []
@@ -442,16 +437,15 @@ with st.sidebar:
 if menu == "질문하기":
     st.subheader("💬 질문하기")
 
-    # 모델 선택 옵션 (진단 후 확정된 모델명으로 변경 가능)
+    # 2026년 9월 기준 최신 Gemini 모델 선택 옵션
     MODEL_OPTIONS = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.1-flash-lite",
         "gemini-2.5-flash",
-        "models/gemini-2.5-flash",
         "gemini-2.5-flash-lite",
-        "models/gemini-2.5-flash-lite",
-        "gemini-2.5-pro",
-        "models/gemini-2.5-pro",
-        "gemini-2.0-flash",
-        "models/gemini-2.0-flash",
     ]
 
     selected_model = st.selectbox(
@@ -508,7 +502,7 @@ if menu == "질문하기":
                             "1. 사이드바의 '📋 모델 목록 확인' 버튼으로 실제 모델명 확인\n"
                             "2. '🔑 모델 자동 테스트' 버튼으로 작동하는 모델 찾기\n"
                             "3. 위 선택박스에서 다른 모델명 선택 후 재시도\n"
-                            "4. google-genai 패키지가 최신인지 확인 (>=1.0.0)"
+                            "4. google-genai 패키지가 최신인지 확인 (>=2.21.0)"
                         )
         else:
             st.warning("질문을 입력해주세요.")

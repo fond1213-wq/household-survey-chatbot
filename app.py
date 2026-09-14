@@ -14,9 +14,6 @@ st.set_page_config(
 )
 
 
-
-
-
 # ============================================================
 # 제목
 # ============================================================
@@ -101,7 +98,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # PDF 업로드
+    # PDF
     # ========================================================
 
     st.markdown("### 📄 PDF 자료")
@@ -115,7 +112,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # TXT 업로드
+    # TXT
     # ========================================================
 
     st.markdown("### 📝 TXT 자료")
@@ -129,7 +126,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # 사진 업로드
+    # 사진
     # ========================================================
 
     st.markdown("### 📷 사진 자료")
@@ -157,29 +154,17 @@ elif menu == "자료관리":
     col1, col2, col3 = st.columns(3)
 
     with col1:
-
-        st.metric(
-            "📄 PDF",
-            pdf_count
-        )
+        st.metric("📄 PDF", pdf_count)
 
     with col2:
-
-        st.metric(
-            "📝 TXT",
-            txt_count
-        )
+        st.metric("📝 TXT", txt_count)
 
     with col3:
-
-        st.metric(
-            "📷 사진",
-            image_count
-        )
+        st.metric("📷 사진", image_count)
 
 
     # ========================================================
-    # PDF 내용 추출
+    # PDF 텍스트 추출
     # ========================================================
 
     if pdf_files:
@@ -192,17 +177,16 @@ elif menu == "자료관리":
 
             try:
 
-                # PDF 파일을 메모리에서 읽기
+                file.seek(0)
+
                 pdf_bytes = file.read()
 
-                # PDF 읽기
                 reader = PdfReader(
                     io.BytesIO(pdf_bytes)
                 )
 
                 full_text = ""
 
-                # 페이지별 텍스트 추출
                 for page_number, page in enumerate(
                     reader.pages,
                     start=1
@@ -220,8 +204,6 @@ elif menu == "자료관리":
 
                         full_text += text
 
-
-                # 결과 표시
                 with st.expander(
                     f"📄 {file.name}"
                 ):
@@ -247,10 +229,8 @@ elif menu == "자료관리":
                         )
 
                         st.info(
-                            "스캔 PDF이거나 PDF 내부의 글자가 "
-                            "이미지로 되어 있을 가능성이 있습니다."
+                            "스캔 PDF일 가능성이 있습니다."
                         )
-
 
             except Exception as e:
 
@@ -258,9 +238,7 @@ elif menu == "자료관리":
                     f"{file.name} 처리 중 오류가 발생했습니다."
                 )
 
-                st.code(
-                    str(e)
-                )
+                st.code(str(e))
 
 
     # ========================================================
@@ -277,12 +255,10 @@ elif menu == "자료관리":
 
             try:
 
-                # 파일 처음부터 읽기
                 file.seek(0)
 
                 content_bytes = file.read()
 
-                # UTF-8 우선
                 try:
 
                     content = content_bytes.decode(
@@ -291,11 +267,9 @@ elif menu == "자료관리":
 
                 except UnicodeDecodeError:
 
-                    # UTF-8이 아닌 경우 CP949 시도
                     content = content_bytes.decode(
                         "cp949"
                     )
-
 
                 with st.expander(
                     f"📝 {file.name}"
@@ -312,16 +286,13 @@ elif menu == "자료관리":
                         "TXT 파일을 정상적으로 읽었습니다."
                     )
 
-
             except Exception as e:
 
                 st.error(
                     f"{file.name} 파일을 읽을 수 없습니다."
                 )
 
-                st.code(
-                    str(e)
-                )
+                st.code(str(e))
 
 
     # ========================================================
@@ -332,7 +303,7 @@ elif menu == "자료관리":
 
         st.divider()
 
-        st.subheader("📷 사진 확인")
+        st.subheader("📷 사진 자료")
 
         for file in image_files:
 
@@ -347,7 +318,6 @@ elif menu == "자료관리":
                 )
 
                 st.info(
-                    "현재 단계에서는 사진을 표시만 합니다. "
                     "다음 단계에서 OCR을 연결하여 "
-                    "사진 속 글자를 자동으로 읽도록 만들 예정입니다."
-        )
+                    "사진 속 글자를 자동으로 읽습니다."
+                )

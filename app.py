@@ -3,9 +3,10 @@ import os
 import sys
 import importlib.metadata
 
-import requests
 import streamlit as st
 from pypdf import PdfReader
+from google import genai
+from google.genai import types
 
 # ============================================================
 # HEIC / HEIF 지원
@@ -70,17 +71,18 @@ st.set_page_config(
 # 🔑 API 키 로드 (Secrets 우선, 환경변수 폴백)
 # ============================================================
 
-OLLAMA_API_KEY = None
+GEMINI_API_KEY = None
+
 try:
-    OLLAMA_API_KEY = st.secrets["OLLAMA_API_KEY"]
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except Exception:
     pass
 
-if not OLLAMA_API_KEY:
-    OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
+if not GEMINI_API_KEY:
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not OLLAMA_API_KEY:
-    st.error("OLLAMA_API_KEY가 설정되지 않았습니다.")
+if not GEMINI_API_KEY:
+    st.error("GEMINI_API_KEY가 설정되지 않았습니다.")
     with st.expander("🔧 진단"):
         try:
             st.write("Secrets 키 목록:", list(st.secrets.keys()))
@@ -88,7 +90,7 @@ if not OLLAMA_API_KEY:
             st.write("st.secrets 오류:", repr(e))
     st.stop()
 
-OLLAMA_API_KEY = OLLAMA_API_KEY.strip()
+GEMINI_API_KEY = GEMINI_API_KEY.strip()
 
 
 # ============================================================
@@ -112,24 +114,22 @@ if "chat_history" not in st.session_state:
 
 
 # ============================================================
-# 🤖 Ollama Cloud API 호출 (requests 직접 사용)
+# 🤖 Gemini 클라이언트 (google-genai SDK)
 # ============================================================
 
-def call_ollama_cloud(
+@st.cache_resource
+def get_gemini_client():
+    return genai.Client(api_key=GEMINI_API_KEY)
+
+
+def call_gemini(
     question: str,
-    model: str = "gpt-oss:120b-cloud",
+    model: str = "gemini-2.5-flash-lite",
     system_prompt: str = None,
 ) -> str:
     """
-    Ollama Cloud API를 직접 호출하여 답변을 반환합니다.
-    네이티브 API(/api/chat)를 사용하여 인증 헤더를 확실히 전달합니다.
+    Gemini API를 호출하여 답변을 반환합니다.
     """
-    url = "https://ollama.com/api/chat"
-    headers = {
-        "Authorization": f"Bearer {OLLAMA_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
     if system_prompt is None:
         system_prompt = (
             "당신은 가구부문 통계조사 업무를 돕는 "
@@ -137,53 +137,39 @@ def call_ollama_cloud(
             "한국어로 정확하게 답변해주세요."
         )
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question},
-        ],
-        "stream": False,
-    }
+    client = get_gemini_client()
 
-    response = requests.post(
-        url, headers=headers, json=payload, timeout=120
+    response = client.models.generate_content(
+        model=model,
+        contents=question,
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=0.7,
+            max_output_tokens=2000,
+        ),
     )
 
-    if response.status_code == 401:
-        raise RuntimeError(f"인증 실패(401): {response.text}")
-
-    if response.status_code == 404:
-        raise RuntimeError(
-            f"모델을 찾을 수 없습니다(404): {response.text}\n"
-            f"모델명({model})이 유효한지 확인하세요."
-        )
-
-    response.raise_for_status()
-    data = response.json()
-    return data["message"]["content"]
+    return response.text
 
 
-def test_ollama_auth() -> dict:
-    """Ollama Cloud 인증 상태를 테스트합니다."""
+def test_gemini_auth() -> dict:
+    """Gemini API 인증 상태를 테스트합니다."""
     try:
-        r = requests.get(
-            "https://ollama.com/api/tags",
-            headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"},
-            timeout=10,
+        client = get_gemini_client()
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents="ping",
         )
         return {
-            "status_code": r.status_code,
-            "ok": r.status_code == 200,
-            "body": r.text,
-            "json": r.json() if r.status_code == 200 else None,
+            "ok": True,
+            "message": response.text[:100],
+            "error": None,
         }
     except Exception as e:
         return {
-            "status_code": None,
             "ok": False,
-            "body": repr(e),
-            "json": None,
+            "message": None,
+            "error": repr(e),
         }
 
 
@@ -351,11 +337,11 @@ with st.sidebar:
         st.write("ONNX Runtime 버전")
         st.code(ONNXRUNTIME_VERSION)
 
-        st.write("API 키 앞 6자리")
-        st.code(OLLAMA_API_KEY[:6] if OLLAMA_API_KEY else "없음")
+        st.write("Gemini API 키 앞 8자리")
+        st.code(GEMINI_API_KEY[:8] if GEMINI_API_KEY else "없음")
 
-        st.write("API 키 길이")
-        st.code(str(len(OLLAMA_API_KEY)) if OLLAMA_API_KEY else "0")
+        st.write("Gemini API 키 길이")
+        st.code(str(len(GEMINI_API_KEY)) if GEMINI_API_KEY else "0")
 
         if OCR_SUPPORT:
             st.success("RapidOCR import 성공")
@@ -365,20 +351,16 @@ with st.sidebar:
 
     st.divider()
 
-    if st.button("🔑 Ollama 인증 테스트", use_container_width=True):
+    if st.button("🔑 Gemini 인증 테스트", use_container_width=True):
         with st.spinner("인증 확인 중..."):
-            result = test_ollama_auth()
+            result = test_gemini_auth()
 
         if result["ok"]:
-            st.success("✅ API 키 인증 성공")
-            models = result["json"].get("models", []) if result["json"] else []
-            st.write(f"사용 가능한 모델: {len(models)}개")
-            for m in models[:10]:
-                name = m.get("name") or m.get("model") or "이름 없음"
-                st.write(f"- {name}")
+            st.success("✅ Gemini API 인증 성공")
+            st.caption(f"응답: {result['message']}")
         else:
-            st.error(f"❌ 인증 실패 (HTTP {result['status_code']})")
-            st.code(result["body"])
+            st.error("❌ Gemini 인증 실패")
+            st.code(result["error"])
 
 
 # ============================================================
@@ -406,9 +388,9 @@ if menu == "질문하기":
 
     if ask_clicked:
         if question.strip():
-            with st.spinner("AI가 답변을 생성하고 있습니다..."):
+            with st.spinner("Gemini가 답변을 생성하고 있습니다..."):
                 try:
-                    answer = call_ollama_cloud(question)
+                    answer = call_gemini(question)
 
                     st.session_state.chat_history.append(
                         {"role": "user", "content": question}
@@ -421,27 +403,26 @@ if menu == "질문하기":
                     st.write(answer)
 
                 except Exception as e:
-                    st.error("AI 호출 중 오류가 발생했습니다.")
+                    st.error("Gemini 호출 중 오류가 발생했습니다.")
                     st.code(repr(e))
 
                     with st.expander("🔧 인증 오류 진단"):
                         st.write(
-                            "키 앞 6자리:",
-                            OLLAMA_API_KEY[:6] if OLLAMA_API_KEY else "없음"
+                            "키 앞 8자리:",
+                            GEMINI_API_KEY[:8] if GEMINI_API_KEY else "없음"
                         )
                         st.write(
                             "키 길이:",
-                            len(OLLAMA_API_KEY) if OLLAMA_API_KEY else 0
+                            len(GEMINI_API_KEY) if GEMINI_API_KEY else 0
                         )
-                        st.write("모델명: gpt-oss:120b-cloud")
-                        st.write("호스트: https://ollama.com")
+                        st.write("모델명: gemini-2.5-flash-lite")
                         st.info(
-                            "401 오류가 계속되면:\n"
-                            "1. ollama.com/settings/keys 에서 키가 Active인지 확인\n"
+                            "401/403 오류가 계속되면:\n"
+                            "1. aistudio.google.com/app/apikey 에서 키가 유효한지 확인\n"
                             "2. 키를 재발급하고 Streamlit Secrets 업데이트\n"
                             "3. ⋮ → Reboot app 클릭\n"
-                            "4. Secrets 키 이름이 정확히 OLLAMA_API_KEY 인지 확인\n"
-                            "5. 사이드바의 '🔑 Ollama 인증 테스트' 버튼으로 재확인"
+                            "4. Secrets 키 이름이 정확히 GEMINI_API_KEY 인지 확인\n"
+                            "5. 사이드바의 '🔑 Gemini 인증 테스트' 버튼으로 재확인"
                         )
         else:
             st.warning("질문을 입력해주세요.")

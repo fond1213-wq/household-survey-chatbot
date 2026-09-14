@@ -7,5 +7,3 @@ onnxruntime
 numpy
 requests
 sentence-transformers
-openai
-ollama

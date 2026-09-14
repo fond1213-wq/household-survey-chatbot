@@ -3,9 +3,9 @@ import os
 import sys
 import importlib.metadata
 
+import requests
 import streamlit as st
 from pypdf import PdfReader
-from ollama import Client
 
 # ============================================================
 # HEIC / HEIF 지원
@@ -107,19 +107,84 @@ if "saved_images" not in st.session_state:
 if "ocr_results" not in st.session_state:
     st.session_state.ocr_results = {}
 
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
 
 # ============================================================
-# 🤖 Ollama 클라이언트 (네이티브 API)
+# 🤖 Ollama Cloud API 호출 (requests 직접 사용)
 # ============================================================
 
-@st.cache_resource
-def get_llm_client():
-    return Client(
-        host="https://ollama.com",
-        headers={
-            "Authorization": f"Bearer {OLLAMA_API_KEY}"
-        }
+def call_ollama_cloud(
+    question: str,
+    model: str = "gpt-oss:120b-cloud",
+    system_prompt: str = None,
+) -> str:
+    """
+    Ollama Cloud API를 직접 호출하여 답변을 반환합니다.
+    네이티브 API(/api/chat)를 사용하여 인증 헤더를 확실히 전달합니다.
+    """
+    url = "https://ollama.com/api/chat"
+    headers = {
+        "Authorization": f"Bearer {OLLAMA_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    if system_prompt is None:
+        system_prompt = (
+            "당신은 가구부문 통계조사 업무를 돕는 "
+            "친절한 AI 어시스턴트입니다. "
+            "한국어로 정확하게 답변해주세요."
+        )
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question},
+        ],
+        "stream": False,
+    }
+
+    response = requests.post(
+        url, headers=headers, json=payload, timeout=120
     )
+
+    if response.status_code == 401:
+        raise RuntimeError(f"인증 실패(401): {response.text}")
+
+    if response.status_code == 404:
+        raise RuntimeError(
+            f"모델을 찾을 수 없습니다(404): {response.text}\n"
+            f"모델명({model})이 유효한지 확인하세요."
+        )
+
+    response.raise_for_status()
+    data = response.json()
+    return data["message"]["content"]
+
+
+def test_ollama_auth() -> dict:
+    """Ollama Cloud 인증 상태를 테스트합니다."""
+    try:
+        r = requests.get(
+            "https://ollama.com/api/tags",
+            headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"},
+            timeout=10,
+        )
+        return {
+            "status_code": r.status_code,
+            "ok": r.status_code == 200,
+            "body": r.text,
+            "json": r.json() if r.status_code == 200 else None,
+        }
+    except Exception as e:
+        return {
+            "status_code": None,
+            "ok": False,
+            "body": repr(e),
+            "json": None,
+        }
 
 
 # ============================================================
@@ -286,15 +351,38 @@ with st.sidebar:
         st.write("ONNX Runtime 버전")
         st.code(ONNXRUNTIME_VERSION)
 
+        st.write("API 키 앞 6자리")
+        st.code(OLLAMA_API_KEY[:6] if OLLAMA_API_KEY else "없음")
+
+        st.write("API 키 길이")
+        st.code(str(len(OLLAMA_API_KEY)) if OLLAMA_API_KEY else "0")
+
         if OCR_SUPPORT:
             st.success("RapidOCR import 성공")
         else:
             st.error("RapidOCR import 실패")
             st.code(OCR_ERROR)
 
+    st.divider()
+
+    if st.button("🔑 Ollama 인증 테스트", use_container_width=True):
+        with st.spinner("인증 확인 중..."):
+            result = test_ollama_auth()
+
+        if result["ok"]:
+            st.success("✅ API 키 인증 성공")
+            models = result["json"].get("models", []) if result["json"] else []
+            st.write(f"사용 가능한 모델: {len(models)}개")
+            for m in models[:10]:
+                name = m.get("name") or m.get("model") or "이름 없음"
+                st.write(f"- {name}")
+        else:
+            st.error(f"❌ 인증 실패 (HTTP {result['status_code']})")
+            st.code(result["body"])
+
 
 # ============================================================
-# 질문하기 (Ollama 연동)
+# 질문하기
 # ============================================================
 
 if menu == "질문하기":
@@ -306,28 +394,29 @@ if menu == "질문하기":
         height=120
     )
 
-    if st.button("🔍 질문하기", use_container_width=True):
+    col_btn1, col_btn2 = st.columns([3, 1])
+    with col_btn1:
+        ask_clicked = st.button(
+            "🔍 질문하기", use_container_width=True
+        )
+    with col_btn2:
+        if st.button("🗑️ 대화 초기화", use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
+
+    if ask_clicked:
         if question.strip():
             with st.spinner("AI가 답변을 생성하고 있습니다..."):
                 try:
-                    client = get_llm_client()
-                    response = client.chat(
-                        model="gpt-oss:120b-cloud",
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    "당신은 가구부문 통계조사 업무를 돕는 "
-                                    "친절한 AI 어시스턴트입니다. "
-                                    "한국어로 정확하게 답변해주세요."
-                                )
-                            },
-                            {"role": "user", "content": question}
-                        ],
-                        stream=False
+                    answer = call_ollama_cloud(question)
+
+                    st.session_state.chat_history.append(
+                        {"role": "user", "content": question}
+                    )
+                    st.session_state.chat_history.append(
+                        {"role": "assistant", "content": answer}
                     )
 
-                    answer = response["message"]["content"]
                     st.success("답변")
                     st.write(answer)
 
@@ -335,10 +424,15 @@ if menu == "질문하기":
                     st.error("AI 호출 중 오류가 발생했습니다.")
                     st.code(repr(e))
 
-                    # 🔍 401 진단 도우미
                     with st.expander("🔧 인증 오류 진단"):
-                        st.write("키 앞 6자리:", OLLAMA_API_KEY[:6] if OLLAMA_API_KEY else "없음")
-                        st.write("키 길이:", len(OLLAMA_API_KEY) if OLLAMA_API_KEY else 0)
+                        st.write(
+                            "키 앞 6자리:",
+                            OLLAMA_API_KEY[:6] if OLLAMA_API_KEY else "없음"
+                        )
+                        st.write(
+                            "키 길이:",
+                            len(OLLAMA_API_KEY) if OLLAMA_API_KEY else 0
+                        )
                         st.write("모델명: gpt-oss:120b-cloud")
                         st.write("호스트: https://ollama.com")
                         st.info(
@@ -346,10 +440,22 @@ if menu == "질문하기":
                             "1. ollama.com/settings/keys 에서 키가 Active인지 확인\n"
                             "2. 키를 재발급하고 Streamlit Secrets 업데이트\n"
                             "3. ⋮ → Reboot app 클릭\n"
-                            "4. Secrets 키 이름이 정확히 OLLAMA_API_KEY 인지 확인"
+                            "4. Secrets 키 이름이 정확히 OLLAMA_API_KEY 인지 확인\n"
+                            "5. 사이드바의 '🔑 Ollama 인증 테스트' 버튼으로 재확인"
                         )
         else:
             st.warning("질문을 입력해주세요.")
+
+    # 대화 기록 표시
+    if st.session_state.chat_history:
+        st.divider()
+        st.subheader("💬 대화 기록")
+        for msg in st.session_state.chat_history:
+            if msg["role"] == "user":
+                st.markdown(f"**🙋 질문:** {msg['content']}")
+            else:
+                st.markdown(f"**🤖 답변:** {msg['content']}")
+            st.divider()
 
 
 # ============================================================
@@ -436,7 +542,7 @@ elif menu == "자료관리":
             st.rerun()
 
     # --------------------------------------------------------
-    # 업로드 현황 (세션 기준)
+    # 업로드 현황
     # --------------------------------------------------------
     st.divider()
     st.subheader("📊 업로드 현황")
@@ -454,7 +560,7 @@ elif menu == "자료관리":
         st.metric("📷 사진", image_count)
 
     # --------------------------------------------------------
-    # PDF 내용 확인 (세션 기준)
+    # PDF 내용 확인
     # --------------------------------------------------------
     if st.session_state.saved_pdfs:
         st.divider()
@@ -495,7 +601,7 @@ elif menu == "자료관리":
                 st.code(repr(e))
 
     # --------------------------------------------------------
-    # TXT 내용 확인 (세션 기준)
+    # TXT 내용 확인
     # --------------------------------------------------------
     if st.session_state.saved_txts:
         st.divider()
@@ -521,7 +627,7 @@ elif menu == "자료관리":
                 st.code(repr(e))
 
     # --------------------------------------------------------
-    # 이미지 + OCR (세션 기준)
+    # 이미지 + OCR
     # --------------------------------------------------------
     if st.session_state.saved_images:
         st.divider()

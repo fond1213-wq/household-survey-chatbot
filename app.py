@@ -1,4 +1,5 @@
 import io
+import os
 import sys
 import importlib.metadata
 
@@ -66,7 +67,7 @@ st.set_page_config(
 
 
 # ============================================================
-# OCR 엔진 (한국어 특화 + 다국어 폴백)
+# OCR 엔진 (한국어 특화 + 다국어 폴백 + 쓰기 가능 캐시 경로)
 # ============================================================
 
 @st.cache_resource
@@ -75,10 +76,23 @@ def get_ocr_engine():
     한국어 인식에 최적화된 RapidOCR 엔진을 반환합니다.
     - 감지(Det): 다국어 모델 (LangDet.MULTI)
     - 인식(Rec): 한국어 모델 (LangRec.KOREAN)
+    - 모델 캐시: /tmp/rapidocr_models (쓰기 가능 경로)
     실패 시 기본 중문 모델로 자동 대체합니다.
     """
     if not OCR_SUPPORT:
         raise RuntimeError(OCR_ERROR)
+
+    # --------------------------------------------------------
+    # 쓰기 가능한 모델 캐시 디렉토리 설정
+    # (Streamlit Cloud, Lambda, Docker 등 읽기 전용 환경 대응)
+    # --------------------------------------------------------
+    CACHE_DIR = "/tmp/rapidocr_models"
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+    except Exception:
+        # /tmp 생성 실패 시 현재 디렉토리 사용
+        CACHE_DIR = os.path.abspath("./rapidocr_models")
+        os.makedirs(CACHE_DIR, exist_ok=True)
 
     # --------------------------------------------------------
     # 1차 시도: 한국어 특화 설정 (Multi Det + Korean Rec)
@@ -86,6 +100,9 @@ def get_ocr_engine():
     try:
         engine = RapidOCR(
             params={
+                # 모델 캐시 위치 (쓰기 가능한 경로)
+                "Global.model_root_dir": CACHE_DIR,
+
                 # 텍스트 감지: 다국어 (한국어 텍스트 영역 감지)
                 "Det.engine_type": EngineType.ONNXRUNTIME,
                 "Det.lang_type": LangDet.MULTI,
@@ -97,6 +114,12 @@ def get_ocr_engine():
                 "Rec.lang_type": LangRec.KOREAN,
                 "Rec.model_type": ModelType.MOBILE,
                 "Rec.ocr_version": OCRVersion.PPOCRV5,
+
+                # 텍스트 방향 분류
+                "Cls.engine_type": EngineType.ONNXRUNTIME,
+                "Cls.lang_type": LangDet.CH,
+                "Cls.model_type": ModelType.MOBILE,
+                "Cls.ocr_version": OCRVersion.PPOCRV4,
             }
         )
         return engine
@@ -111,6 +134,7 @@ def get_ocr_engine():
             )
             engine = RapidOCR(
                 params={
+                    "Global.model_root_dir": CACHE_DIR,
                     "Det.engine_type": EngineType.ONNXRUNTIME,
                     "Det.lang_type": LangDet.CH,
                     "Det.model_type": ModelType.MOBILE,
@@ -119,6 +143,10 @@ def get_ocr_engine():
                     "Rec.lang_type": LangRec.CH,
                     "Rec.model_type": ModelType.MOBILE,
                     "Rec.ocr_version": OCRVersion.PPOCRV5,
+                    "Cls.engine_type": EngineType.ONNXRUNTIME,
+                    "Cls.lang_type": LangDet.CH,
+                    "Cls.model_type": ModelType.MOBILE,
+                    "Cls.ocr_version": OCRVersion.PPOCRV4,
                 }
             )
             return engine

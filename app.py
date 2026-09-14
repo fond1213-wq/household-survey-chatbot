@@ -20,7 +20,7 @@ except Exception as e:
 
 
 # ============================================================
-# RapidOCR 지원 확인
+# RapidOCR 지원 확인 및 Enum 임포트
 # ============================================================
 
 OCR_SUPPORT = False
@@ -38,8 +38,16 @@ try:
 except Exception:
     pass
 
+# RapidOCR v3.x 필수 임포트 (LangDet, LangRec, OCRVersion, ModelType 등)
 try:
-    from rapidocr import RapidOCR
+    from rapidocr import (
+        RapidOCR,
+        LangDet,
+        LangRec,
+        OCRVersion,
+        ModelType,
+        EngineType,
+    )
     OCR_SUPPORT = True
 except Exception as e:
     OCR_SUPPORT = False
@@ -58,48 +66,65 @@ st.set_page_config(
 
 
 # ============================================================
-# OCR 엔진 (한국어 특화 설정)
+# OCR 엔진 (한국어 특화 + 다국어 폴백)
 # ============================================================
 
 @st.cache_resource
 def get_ocr_engine():
     """
     한국어 인식에 최적화된 RapidOCR 엔진을 반환합니다.
-    텍스트 감지(det)는 다국어(multi) 모델을,
-    텍스트 인식(rec)은 한국어(korean_mobile) 모델을 사용합니다.
+    - 감지(Det): 다국어 모델 (LangDet.MULTI)
+    - 인식(Rec): 한국어 모델 (LangRec.KOREAN)
+    실패 시 기본 중문 모델로 자동 대체합니다.
     """
     if not OCR_SUPPORT:
         raise RuntimeError(OCR_ERROR)
-    
+
+    # --------------------------------------------------------
+    # 1차 시도: 한국어 특화 설정 (Multi Det + Korean Rec)
+    # --------------------------------------------------------
     try:
-        # ----------------------------------------------------
-        # 1차 시도: 한국어 특화 설정 (Multi + Korean Mobile)
-        # ----------------------------------------------------
         engine = RapidOCR(
             params={
-                "Global.lang_det": "multi",          # 다국어 텍스트 감지
-                "Global.lang_rec": "korean_mobile"   # 한국어 텍스트 인식
+                # 텍스트 감지: 다국어 (한국어 텍스트 영역 감지)
+                "Det.engine_type": EngineType.ONNXRUNTIME,
+                "Det.lang_type": LangDet.MULTI,
+                "Det.model_type": ModelType.MOBILE,
+                "Det.ocr_version": OCRVersion.PPOCRV5,
+
+                # 텍스트 인식: 한국어
+                "Rec.engine_type": EngineType.ONNXRUNTIME,
+                "Rec.lang_type": LangRec.KOREAN,
+                "Rec.model_type": ModelType.MOBILE,
+                "Rec.ocr_version": OCRVersion.PPOCRV5,
             }
         )
         return engine
+
     except Exception as e:
         # ----------------------------------------------------
-        # 2차 시도: 한국어 모델 로드 실패 시 기본 모델로 대체
+        # 2차 시도: 한국어 모델 로드 실패 시 기본 중문 모델
         # ----------------------------------------------------
         try:
             st.warning(
                 f"한국어 모델 로드 실패. 기본 모델로 대체합니다. (원인: {e})"
             )
-            # 한국어 모델을 못 쓰는 경우, 최소한 기본 모델이라도 사용
             engine = RapidOCR(
                 params={
-                    "Global.lang_det": "ch_mobile",
-                    "Global.lang_rec": "ch_mobile"
+                    "Det.engine_type": EngineType.ONNXRUNTIME,
+                    "Det.lang_type": LangDet.CH,
+                    "Det.model_type": ModelType.MOBILE,
+                    "Det.ocr_version": OCRVersion.PPOCRV5,
+                    "Rec.engine_type": EngineType.ONNXRUNTIME,
+                    "Rec.lang_type": LangRec.CH,
+                    "Rec.model_type": ModelType.MOBILE,
+                    "Rec.ocr_version": OCRVersion.PPOCRV5,
                 }
             )
             return engine
+
         except Exception as e2:
-            # 최종적으로 실패하면 에러를 발생시킴
+            # 최종 실패
             raise RuntimeError(f"OCR 엔진 초기화 실패: {repr(e2)}")
 
 
@@ -125,7 +150,6 @@ def run_ocr(pil_image):
 def extract_ocr_text(result):
     texts = []
     try:
-        # 최신 RapidOCR 결과 객체
         if hasattr(result, "txts"):
             txts = result.txts
             if txts is not None:
@@ -136,7 +160,6 @@ def extract_ocr_text(result):
                             texts.append(text)
             return texts
 
-        # tuple 형태 결과
         if isinstance(result, tuple):
             for item in result:
                 if hasattr(item, "txts"):
@@ -149,7 +172,6 @@ def extract_ocr_text(result):
                                     texts.append(text)
                         return texts
 
-        # list 형태 결과
         if isinstance(result, list):
             for item in result:
                 if isinstance(item, str):
@@ -199,8 +221,8 @@ with st.sidebar:
 
     st.write("**OCR 지원**")
     if OCR_SUPPORT:
-        st.success("✅ RapidOCR 지원")
-        st.caption("한국어 인식 모델(korean_mobile) 로드 시도")
+        st.success("✅ RapidOCR v3 지원")
+        st.caption("한국어 인식 모델(korean) 로드 시도")
     else:
         st.error("❌ RapidOCR 지원 안 됨")
 
@@ -410,8 +432,7 @@ elif menu == "자료관리":
                 try:
                     file.seek(0)
                     image_bytes = file.read()
-                    
-                    # 세션 상태에서 이미지 가져오기 (중복 로드 방지)
+
                     image = st.session_state.get(f"image_{index}_{file.name}")
                     if image is None:
                         from PIL import Image
@@ -419,7 +440,6 @@ elif menu == "자료관리":
                         image.load()
                         st.session_state[f"image_{index}_{file.name}"] = image
 
-                    # 이미지 표시
                     st.write("**실제 이미지 포맷**")
                     st.code(str(image.format))
                     st.image(image, caption=file.name, use_container_width=True)
@@ -427,7 +447,7 @@ elif menu == "자료관리":
 
                     # OCR 실행
                     st.markdown("### 🔎 OCR (한국어 특화)")
-                    
+
                     if not OCR_SUPPORT:
                         st.error("RapidOCR을 사용할 수 없습니다.")
                         st.code(OCR_ERROR)
@@ -439,7 +459,7 @@ elif menu == "자료관리":
                         ):
                             with st.spinner("사진의 글자를 인식하고 있습니다..."):
                                 result, error = run_ocr(image)
-                            
+
                             if error:
                                 st.error("OCR 실행 중 오류가 발생했습니다.")
                                 st.code(error)

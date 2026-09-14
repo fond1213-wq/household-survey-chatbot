@@ -137,6 +137,25 @@ elif menu == "자료관리":
         accept_multiple_files=True,
         key="image_upload"
     )
+    image_files = st.file_uploader(
+        "사진 파일을 선택하세요.",
+        type=["jpg", "jpeg", "png", "webp", "heic", "heif"],
+        accept_multiple_files=True,
+        key="image_upload"
+    )
+
+    if image_files:
+       st.success(
+         f"사진 {len(image_files)}개가 업로드되었습니다."
+       )
+
+       for file in image_files:
+         st.write(
+            f"파일명: {file.name} / "
+            f"크기: {file.size:,} bytes"
+         )
+    else:
+       st.info("아직 사진이 업로드되지 않았습니다.")
 
 
     # ========================================================

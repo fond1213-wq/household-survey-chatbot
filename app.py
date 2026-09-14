@@ -238,9 +238,7 @@ def load_all_files_from_storage():
             except Exception:
                 continue
 
-            # 원본 파일명을 세션 키로 저장
             st.session_state[session_key][info["original_name"]] = data
-            # 다운로드/삭제 시 사용할 안전 키 매핑
             st.session_state.storage_keys[
                 f"{category}/{info['original_name']}"
             ] = info["key"]
@@ -293,8 +291,12 @@ def call_gemini(
 ) -> str:
     if system_prompt is None:
         system_prompt = (
-            "당신은 가구부문 통계조사 업무를 돕는 "
-            "친절한 AI 어시스턴트입니다. "
+            "당신은 가구부문 통계조사 업무를 돕는 AI 어시스턴트입니다.\n"
+            "**반드시 아래 등록된 지침서 내용을 기반으로만 답변하세요.**\n"
+            "- 2026년 경제활동인구조사 지침서\n"
+            "- 2024년 가계동향조사 지침서\n\n"
+            "등록된 자료에 없는 내용은 추측하지 말고 "
+            "'등록된 지침서에서 해당 내용을 찾을 수 없습니다'라고 답변하세요.\n"
             "한국어로 정확하게 답변해주세요."
         )
 
@@ -454,7 +456,7 @@ def extract_ocr_text(result):
 
 
 # ============================================================
-# 제목
+# 제목 + 🔴 답변 범위 안내 배너
 # ============================================================
 
 st.title("📚 가구부문통계조사 챗봇")
@@ -462,6 +464,55 @@ st.caption(
     "가구부문 통계조사 업무자료를 기반으로 "
     "질문에 답변하는 AI 챗봇"
 )
+
+# ------------------------------------------------------------
+# ⚠️ 답변 범위 안내 (빨간색 강조 배너)
+# ------------------------------------------------------------
+st.markdown(
+    """
+    <div style="
+        background-color: #FDECEC;
+        border-left: 6px solid #D32F2F;
+        border-radius: 8px;
+        padding: 18px 22px;
+        margin: 18px 0;
+        box-shadow: 0 2px 8px rgba(211, 47, 47, 0.15);
+    ">
+        <div style="
+            font-size: 1.1rem;
+            font-weight: 800;
+            color: #B71C1C;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        ">
+            ⚠️ 답변 범위 안내
+        </div>
+        <div style="
+            font-size: 0.98rem;
+            color: #7F1D1D;
+            line-height: 1.7;
+            font-weight: 500;
+        ">
+            본 챗봇은 <b>아래 등록된 지침서 기반으로만 답변</b>합니다.<br>
+            · <b>2026년 경제활동인구조사 지침서</b> (외부용)<br>
+            · <b>2024년 가계동향조사 지침서</b>
+        </div>
+        <div style="
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px dashed #F5A5A5;
+            font-size: 0.88rem;
+            color: #991B1B;
+        ">
+            ※ 등록되지 않은 내용은 답변하지 않거나 안내가 제한될 수 있습니다.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.divider()
 
 

@@ -132,10 +132,11 @@ elif menu == "자료관리":
     st.markdown("### 📷 사진 자료")
 
     image_files = st.file_uploader(
-        "사진 파일을 선택하세요.",
-        type=["jpg", "jpeg", "png", "webp"],
-        accept_multiple_files=True,
-        key="image_upload"
+      "사진 파일을 선택하세요.",
+      type="image",
+      accept_multiple_files=True,
+      key="image_upload",
+      max_upload_size=50
     )
 
 

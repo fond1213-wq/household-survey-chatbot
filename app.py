@@ -92,6 +92,23 @@ OLLAMA_API_KEY = OLLAMA_API_KEY.strip()
 
 
 # ============================================================
+# 🗂️ 세션 상태 초기화 (업로드 파일 보존)
+# ============================================================
+
+if "saved_pdfs" not in st.session_state:
+    st.session_state.saved_pdfs = {}
+
+if "saved_txts" not in st.session_state:
+    st.session_state.saved_txts = {}
+
+if "saved_images" not in st.session_state:
+    st.session_state.saved_images = {}
+
+if "ocr_results" not in st.session_state:
+    st.session_state.ocr_results = {}
+
+
+# ============================================================
 # 🤖 Ollama 클라이언트 (Ollama Cloud)
 # ============================================================
 
@@ -120,19 +137,16 @@ def get_ocr_engine():
     try:
         engine = RapidOCR(
             params={
-                # 감지: 다국어
                 "Det.engine_type": EngineType.ONNXRUNTIME,
                 "Det.lang_type": LangDet.MULTI,
                 "Det.model_type": ModelType.MOBILE,
                 "Det.ocr_version": OCRVersion.PPOCRV5,
 
-                # 인식: 한국어
                 "Rec.engine_type": EngineType.ONNXRUNTIME,
                 "Rec.lang_type": LangRec.KOREAN,
                 "Rec.model_type": ModelType.MOBILE,
                 "Rec.ocr_version": OCRVersion.PPOCRV5,
 
-                # 텍스트 방향 분류
                 "Cls.engine_type": EngineType.ONNXRUNTIME,
                 "Cls.lang_type": LangDet.CH,
                 "Cls.model_type": ModelType.MOBILE,
@@ -142,7 +156,6 @@ def get_ocr_engine():
         return engine
 
     except Exception as e:
-        # 폴백: 기본 중문 모델
         try:
             st.warning(f"한국어 모델 로드 실패. 기본 모델로 대체합니다. (원인: {e})")
             engine = RapidOCR(
@@ -260,6 +273,7 @@ with st.sidebar:
     st.write("**OCR 지원**")
     if OCR_SUPPORT:
         st.success("✅ RapidOCR v3 지원")
+        st.caption("한국어 인식 모델(korean) 로드 시도")
     else:
         st.error("❌ RapidOCR 지원 안 됨")
 
@@ -341,7 +355,7 @@ elif menu == "자료관리":
     st.divider()
 
     # --------------------------------------------------------
-    # PDF
+    # PDF 업로더
     # --------------------------------------------------------
     st.markdown("### 📄 PDF 자료")
     pdf_files = st.file_uploader(
@@ -351,8 +365,21 @@ elif menu == "자료관리":
         key="pdf_upload"
     )
 
+    # 업로드된 파일을 세션에 저장
+    if pdf_files:
+        for f in pdf_files:
+            f.seek(0)
+            st.session_state.saved_pdfs[f.name] = f.read()
+
+    # 세션에 저장된 PDF 관리
+    if st.session_state.saved_pdfs:
+        st.caption(f"📦 저장된 PDF: {len(st.session_state.saved_pdfs)}개")
+        if st.button("🗑️ PDF 목록 비우기", key="clear_pdfs"):
+            st.session_state.saved_pdfs = {}
+            st.rerun()
+
     # --------------------------------------------------------
-    # TXT
+    # TXT 업로더
     # --------------------------------------------------------
     st.markdown("### 📝 TXT 자료")
     txt_files = st.file_uploader(
@@ -362,8 +389,19 @@ elif menu == "자료관리":
         key="txt_upload"
     )
 
+    if txt_files:
+        for f in txt_files:
+            f.seek(0)
+            st.session_state.saved_txts[f.name] = f.read()
+
+    if st.session_state.saved_txts:
+        st.caption(f"📦 저장된 TXT: {len(st.session_state.saved_txts)}개")
+        if st.button("🗑️ TXT 목록 비우기", key="clear_txts"):
+            st.session_state.saved_txts = {}
+            st.rerun()
+
     # --------------------------------------------------------
-    # 이미지
+    # 이미지 업로더
     # --------------------------------------------------------
     st.markdown("### 📷 사진 자료")
     st.write(
@@ -377,15 +415,27 @@ elif menu == "자료관리":
         key="image_upload"
     )
 
+    if image_files:
+        for f in image_files:
+            f.seek(0)
+            st.session_state.saved_images[f.name] = f.read()
+
+    if st.session_state.saved_images:
+        st.caption(f"📦 저장된 사진: {len(st.session_state.saved_images)}개")
+        if st.button("🗑️ 사진 목록 비우기", key="clear_images"):
+            st.session_state.saved_images = {}
+            st.session_state.ocr_results = {}
+            st.rerun()
+
     # --------------------------------------------------------
-    # 업로드 현황
+    # 업로드 현황 (세션 기준)
     # --------------------------------------------------------
     st.divider()
     st.subheader("📊 업로드 현황")
 
-    pdf_count = len(pdf_files) if pdf_files else 0
-    txt_count = len(txt_files) if txt_files else 0
-    image_count = len(image_files) if image_files else 0
+    pdf_count = len(st.session_state.saved_pdfs)
+    txt_count = len(st.session_state.saved_txts)
+    image_count = len(st.session_state.saved_images)
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -396,16 +446,14 @@ elif menu == "자료관리":
         st.metric("📷 사진", image_count)
 
     # --------------------------------------------------------
-    # PDF 처리
+    # PDF 내용 확인 (세션 기준)
     # --------------------------------------------------------
-    if pdf_files:
+    if st.session_state.saved_pdfs:
         st.divider()
         st.subheader("📄 PDF 내용 확인")
 
-        for file in pdf_files:
+        for name, pdf_bytes in st.session_state.saved_pdfs.items():
             try:
-                file.seek(0)
-                pdf_bytes = file.read()
                 reader = PdfReader(io.BytesIO(pdf_bytes))
                 full_text = ""
 
@@ -419,13 +467,13 @@ elif menu == "자료관리":
                         )
                         full_text += text
 
-                with st.expander(f"📄 {file.name}"):
+                with st.expander(f"📄 {name}"):
                     if full_text.strip():
                         st.text_area(
                             "추출된 텍스트",
                             full_text,
                             height=500,
-                            key=f"pdf_text_{file.name}"
+                            key=f"pdf_text_{name}"
                         )
                         st.success(
                             f"{len(reader.pages)}페이지에서 "
@@ -435,88 +483,86 @@ elif menu == "자료관리":
                         st.warning("PDF에서 텍스트를 찾지 못했습니다.")
                         st.info("스캔 PDF일 가능성이 있습니다.")
             except Exception as e:
-                st.error(f"{file.name} 처리 중 오류가 발생했습니다.")
+                st.error(f"{name} 처리 중 오류가 발생했습니다.")
                 st.code(repr(e))
 
     # --------------------------------------------------------
-    # TXT 처리
+    # TXT 내용 확인 (세션 기준)
     # --------------------------------------------------------
-    if txt_files:
+    if st.session_state.saved_txts:
         st.divider()
         st.subheader("📝 TXT 내용 확인")
 
-        for file in txt_files:
+        for name, content_bytes in st.session_state.saved_txts.items():
             try:
-                file.seek(0)
-                content_bytes = file.read()
                 try:
                     content = content_bytes.decode("utf-8")
                 except UnicodeDecodeError:
                     content = content_bytes.decode("cp949")
 
-                with st.expander(f"📝 {file.name}"):
+                with st.expander(f"📝 {name}"):
                     st.text_area(
                         "TXT 내용",
                         content,
                         height=400,
-                        key=f"txt_text_{file.name}"
+                        key=f"txt_text_{name}"
                     )
                     st.success("TXT 파일을 정상적으로 읽었습니다.")
             except Exception as e:
-                st.error(f"{file.name} 파일을 읽을 수 없습니다.")
+                st.error(f"{name} 파일을 읽을 수 없습니다.")
                 st.code(repr(e))
 
     # --------------------------------------------------------
-    # 이미지 처리 + OCR
+    # 이미지 + OCR (세션 기준)
     # --------------------------------------------------------
-    if image_files:
+    if st.session_state.saved_images:
         st.divider()
         st.subheader("📷 업로드된 사진")
 
-        for index, file in enumerate(image_files):
-            with st.expander(f"📷 {file.name}", expanded=True):
-                # 파일 정보
+        from PIL import Image
+
+        for index, (name, image_bytes) in enumerate(
+            st.session_state.saved_images.items()
+        ):
+            with st.expander(f"📷 {name}", expanded=True):
                 col_a, col_b, col_c = st.columns(3)
                 with col_a:
                     st.write("**파일명**")
-                    st.code(file.name)
+                    st.code(name)
                 with col_b:
-                    st.write("**MIME 타입**")
-                    st.code(str(file.type))
-                with col_c:
                     st.write("**크기**")
-                    st.code(f"{file.size / 1024 / 1024:.2f} MB")
+                    st.code(f"{len(image_bytes) / 1024 / 1024:.2f} MB")
+                with col_c:
+                    st.write("**포맷**")
+                    try:
+                        _img = Image.open(io.BytesIO(image_bytes))
+                        st.code(str(_img.format))
+                    except Exception:
+                        st.code("알 수 없음")
 
-                # 이미지 열기
                 try:
-                    file.seek(0)
-                    image_bytes = file.read()
+                    image = Image.open(io.BytesIO(image_bytes))
+                    image.load()
 
-                    image = st.session_state.get(f"image_{index}_{file.name}")
-                    if image is None:
-                        from PIL import Image
-                        image = Image.open(io.BytesIO(image_bytes))
-                        image.load()
-                        st.session_state[f"image_{index}_{file.name}"] = image
-
-                    st.write("**실제 이미지 포맷**")
-                    st.code(str(image.format))
-                    st.image(image, caption=file.name, use_container_width=True)
+                    st.image(image, caption=name, use_container_width=True)
                     st.success("사진을 정상적으로 읽었습니다.")
 
-                    # OCR 실행
                     st.markdown("### 🔎 OCR (한국어 특화)")
 
                     if not OCR_SUPPORT:
                         st.error("RapidOCR을 사용할 수 없습니다.")
                         st.code(OCR_ERROR)
                     else:
+                        ocr_key = f"ocr_{index}_{name}"
+
                         if st.button(
                             "🔎 이 사진 OCR 실행",
-                            key=f"ocr_button_{index}_{file.name}",
+                            key=f"ocr_button_{index}_{name}",
                             use_container_width=True
                         ):
-                            with st.spinner("사진의 글자를 인식하고 있습니다..."):
+                            with st.spinner(
+                                "사진의 글자를 인식하고 있습니다..."
+                            ):
                                 result, error = run_ocr(image)
 
                             if error:
@@ -525,22 +571,27 @@ elif menu == "자료관리":
                             else:
                                 texts = extract_ocr_text(result)
                                 if texts:
+                                    st.session_state.ocr_results[
+                                        ocr_key
+                                    ] = "\n".join(texts)
                                     st.success(
                                         f"{len(texts)}개의 "
                                         "텍스트 영역을 인식했습니다."
-                                    )
-                                    ocr_text = "\n".join(texts)
-                                    st.text_area(
-                                        "📝 OCR 인식 결과",
-                                        ocr_text,
-                                        height=300,
-                                        key=f"ocr_result_{index}_{file.name}"
                                     )
                                 else:
                                     st.warning(
                                         "OCR은 실행됐지만 "
                                         "인식된 글자가 없습니다."
                                     )
+
+                        # 저장된 OCR 결과 표시
+                        if ocr_key in st.session_state.ocr_results:
+                            st.text_area(
+                                "📝 OCR 인식 결과",
+                                st.session_state.ocr_results[ocr_key],
+                                height=300,
+                                key=f"ocr_result_{index}_{name}"
+                            )
 
                 except Exception as e:
                     st.error("이미지를 처리할 수 없습니다.")

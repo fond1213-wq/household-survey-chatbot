@@ -13,11 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 파일 업로드 최대 용량: 50MB
-st.set_option(
-    "server.maxUploadSize",
-    50
-)
+
 
 
 

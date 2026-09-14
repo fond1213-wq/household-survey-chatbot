@@ -19,21 +19,27 @@ st.set_page_config(
 
 
 # ============================================================
-# 패키지 상태
+# Pillow
 # ============================================================
 
-# Pillow
 try:
     from PIL import Image
+
     PIL_SUPPORT = True
     PIL_ERROR = ""
+
 except Exception as e:
+
     PIL_SUPPORT = False
     PIL_ERROR = repr(e)
 
 
-# HEIC
+# ============================================================
+# HEIC / HEIF
+# ============================================================
+
 try:
+
     from pillow_heif import register_heif_opener
 
     register_heif_opener()
@@ -47,7 +53,10 @@ except Exception as e:
     HEIC_ERROR = repr(e)
 
 
+# ============================================================
 # RapidOCR
+# ============================================================
+
 try:
 
     from rapidocr import RapidOCR
@@ -61,7 +70,10 @@ except Exception as e:
     OCR_IMPORT_ERROR = repr(e)
 
 
-# Requests
+# ============================================================
+# requests
+# ============================================================
+
 try:
 
     import requests
@@ -75,7 +87,10 @@ except Exception as e:
     REQUESTS_ERROR = repr(e)
 
 
-# NumPy
+# ============================================================
+# numpy
+# ============================================================
+
 try:
 
     import numpy as np
@@ -94,21 +109,29 @@ except Exception as e:
 # ============================================================
 
 try:
-    RAPIDOCR_VERSION = importlib.metadata.version("rapidocr")
+
+    RAPIDOCR_VERSION = importlib.metadata.version(
+        "rapidocr"
+    )
+
 except Exception:
+
     RAPIDOCR_VERSION = "확인 불가"
 
 
 try:
+
     ONNXRUNTIME_VERSION = importlib.metadata.version(
         "onnxruntime"
     )
+
 except Exception:
+
     ONNXRUNTIME_VERSION = "확인 불가"
 
 
 # ============================================================
-# 모델 저장 폴더
+# 모델 폴더
 # ============================================================
 
 BASE_DIR = os.path.dirname(
@@ -127,97 +150,101 @@ os.makedirs(
 
 
 # ============================================================
-# RapidOCR 3.9.2 공식 모델
-#
-# /tmp/rapidocr_models를 사용하지 않고
-# 우리 앱의 models 폴더에 직접 저장
+# OCR 모델 URL
 # ============================================================
 
 MODEL_URLS = {
 
-    "det": (
+    "det":
         "https://www.modelscope.cn/models/"
         "RapidAI/RapidOCR/resolve/v3.9.2/"
         "onnx/PP-OCRv5/det/"
-        "ch_PP-OCRv5_det_mobile.onnx"
-    ),
+        "ch_PP-OCRv5_det_mobile.onnx",
 
-    "cls": (
+    "cls":
         "https://www.modelscope.cn/models/"
         "RapidAI/RapidOCR/resolve/v3.9.2/"
         "onnx/PP-OCRv5/cls/"
-        "ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx"
-    ),
+        "ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx",
 
-    "rec": (
+    "rec":
         "https://www.modelscope.cn/models/"
         "RapidAI/RapidOCR/resolve/v3.9.2/"
         "onnx/PP-OCRv5/rec/"
-        "korean_PP-OCRv5_rec_mobile.onnx"
-    ),
+        "korean_PP-OCRv5_rec_mobile.onnx",
 
-    "dict": (
+    "dict":
         "https://www.modelscope.cn/models/"
         "RapidAI/RapidOCR/resolve/v3.9.2/"
         "paddle/PP-OCRv5/rec/"
         "korean_PP-OCRv5_rec_mobile/"
         "ppocrv5_korean_dict.txt"
-    )
 }
 
+
+# ============================================================
+# 실제 모델 파일 위치
+# ============================================================
 
 MODEL_FILES = {
 
-    "det": os.path.join(
-        MODEL_DIR,
-        "ch_PP-OCRv5_det_mobile.onnx"
-    ),
+    "det":
+        os.path.join(
+            MODEL_DIR,
+            "ch_PP-OCRv5_det_mobile.onnx"
+        ),
 
-    "cls": os.path.join(
-        MODEL_DIR,
-        "ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx"
-    ),
+    "cls":
+        os.path.join(
+            MODEL_DIR,
+            "ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx"
+        ),
 
-    "rec": os.path.join(
-        MODEL_DIR,
-        "korean_PP-OCRv5_rec_mobile.onnx"
-    ),
+    "rec":
+        os.path.join(
+            MODEL_DIR,
+            "korean_PP-OCRv5_rec_mobile.onnx"
+        ),
 
-    "dict": os.path.join(
-        MODEL_DIR,
-        "ppocrv5_korean_dict.txt"
-    )
+    "dict":
+        os.path.join(
+            MODEL_DIR,
+            "ppocrv5_korean_dict.txt"
+        )
 }
 
 
 # ============================================================
-# 모델 다운로드
+# 파일 다운로드
 # ============================================================
 
-def download_file(
-    url,
-    destination
-):
+def download_file(url, destination):
 
-    # 이미 파일이 존재하면 다운로드하지 않음
+    # 이미 존재하는 파일이면 다시 받지 않음
     if os.path.exists(destination):
 
-        size = os.path.getsize(
-            destination
-        )
+        try:
 
-        if size > 0:
-
-            return True, (
-                f"이미 존재: "
-                f"{os.path.basename(destination)}"
+            size = os.path.getsize(
+                destination
             )
+
+            if size > 0:
+
+                return True, (
+                    "이미 존재: "
+                    + os.path.basename(destination)
+                )
+
+        except Exception:
+
+            pass
 
 
     if not REQUESTS_SUPPORT:
 
         return False, (
-            "requests 패키지를 사용할 수 없습니다."
+            "requests 패키지를 불러올 수 없습니다."
         )
 
 
@@ -251,7 +278,7 @@ def download_file(
         )
 
 
-        if size == 0:
+        if size <= 0:
 
             try:
                 os.remove(destination)
@@ -259,13 +286,13 @@ def download_file(
                 pass
 
             return False, (
-                "다운로드된 파일 크기가 0입니다."
+                "다운로드된 파일이 비어 있습니다."
             )
 
 
         return True, (
-            f"다운로드 완료: "
-            f"{os.path.basename(destination)}"
+            "다운로드 완료: "
+            + os.path.basename(destination)
         )
 
 
@@ -282,6 +309,7 @@ def download_file(
                 )
 
         except Exception:
+
             pass
 
 
@@ -289,7 +317,7 @@ def download_file(
 
 
 # ============================================================
-# 모든 OCR 모델 준비
+# OCR 모델 준비
 # ============================================================
 
 @st.cache_resource
@@ -312,6 +340,7 @@ def prepare_ocr_models():
             MODEL_FILES[key]
         )
 
+
         results.append(
             (
                 key,
@@ -319,6 +348,7 @@ def prepare_ocr_models():
                 message
             )
         )
+
 
         if not success:
 
@@ -330,6 +360,9 @@ def prepare_ocr_models():
 
 # ============================================================
 # OCR 엔진 생성
+#
+# 중요:
+# engine_type 문자열을 직접 넣지 않음
 # ============================================================
 
 @st.cache_resource
@@ -343,54 +376,53 @@ def create_ocr_engine():
         )
 
 
-    # --------------------------------------------------------
-    # 중요:
-    # 기본 /tmp/rapidocr_models를 사용하지 않음
-    # --------------------------------------------------------
+    # 모델 파일 존재 확인
+
+    for key in [
+        "det",
+        "cls",
+        "rec",
+        "dict"
+    ]:
+
+        path = MODEL_FILES[key]
+
+
+        if not os.path.exists(path):
+
+            raise FileNotFoundError(
+                "OCR 모델 파일이 없습니다:\n"
+                + path
+            )
+
+
+        if os.path.getsize(path) <= 0:
+
+            raise FileNotFoundError(
+                "OCR 모델 파일이 비어 있습니다:\n"
+                + path
+            )
+
 
     try:
+
+        # ----------------------------------------------------
+        # 핵심 수정 부분
+        #
+        # engine_type을 직접 지정하지 않습니다.
+        # RapidOCR가 기본 ONNX Runtime 설정을 사용하도록 합니다.
+        # 모델 경로만 직접 지정합니다.
+        # ----------------------------------------------------
 
         engine = RapidOCR(
 
             params={
 
-                # --------------------------------------------
-                # Detection
-                # --------------------------------------------
-
-                "Det.engine_type": "onnxruntime",
-
-                "Det.lang_type": "ch",
-
-                "Det.model_type": "mobile",
-
-                "Det.ocr_version": "PP-OCRv5",
-
                 "Det.model_path":
                     MODEL_FILES["det"],
 
-
-                # --------------------------------------------
-                # Classification
-                # --------------------------------------------
-
-                "Cls.engine_type": "onnxruntime",
-
                 "Cls.model_path":
                     MODEL_FILES["cls"],
-
-
-                # --------------------------------------------
-                # Recognition
-                # --------------------------------------------
-
-                "Rec.engine_type": "onnxruntime",
-
-                "Rec.lang_type": "korean",
-
-                "Rec.model_type": "mobile",
-
-                "Rec.ocr_version": "PP-OCRv5",
 
                 "Rec.model_path":
                     MODEL_FILES["rec"],
@@ -418,9 +450,7 @@ def create_ocr_engine():
 # OCR 실행
 # ============================================================
 
-def run_ocr(
-    pil_image
-):
+def run_ocr(pil_image):
 
     if not OCR_SUPPORT:
 
@@ -440,17 +470,26 @@ def run_ocr(
 
     try:
 
-        image = pil_image.convert(
+        # RGB 변환
+
+        rgb_image = pil_image.convert(
             "RGB"
         )
 
+
+        # NumPy 배열
+
         image_array = np.array(
-            image
+            rgb_image
         )
 
 
+        # OCR 엔진
+
         engine = create_ocr_engine()
 
+
+        # OCR 실행
 
         result = engine(
             image_array
@@ -466,12 +505,10 @@ def run_ocr(
 
 
 # ============================================================
-# OCR 결과에서 텍스트 추출
+# OCR 결과 텍스트 추출
 # ============================================================
 
-def extract_ocr_text(
-    result
-):
+def extract_ocr_text(result):
 
     texts = []
 
@@ -479,7 +516,7 @@ def extract_ocr_text(
     try:
 
         # ----------------------------------------------------
-        # 최신 RapidOCR 결과
+        # RapidOCR 결과 객체
         # ----------------------------------------------------
 
         if hasattr(
@@ -489,27 +526,32 @@ def extract_ocr_text(
 
             values = result.txts
 
+
             if values is not None:
 
                 for value in values:
 
-                    if value is not None:
+                    if value is None:
+                        continue
 
-                        text = str(
-                            value
-                        ).strip()
 
-                        if text:
+                    text = str(
+                        value
+                    ).strip()
 
-                            texts.append(
-                                text
-                            )
+
+                    if text:
+
+                        texts.append(
+                            text
+                        )
+
 
             return texts
 
 
         # ----------------------------------------------------
-        # tuple 결과
+        # tuple
         # ----------------------------------------------------
 
         if isinstance(
@@ -526,27 +568,32 @@ def extract_ocr_text(
 
                     values = item.txts
 
+
                     if values is not None:
 
                         for value in values:
 
-                            if value is not None:
+                            if value is None:
+                                continue
 
-                                text = str(
-                                    value
-                                ).strip()
 
-                                if text:
+                            text = str(
+                                value
+                            ).strip()
 
-                                    texts.append(
-                                        text
-                                    )
 
-                        return texts
+                            if text:
+
+                                texts.append(
+                                    text
+                                )
+
+
+                    return texts
 
 
         # ----------------------------------------------------
-        # list 결과
+        # list
         # ----------------------------------------------------
 
         if isinstance(
@@ -562,6 +609,7 @@ def extract_ocr_text(
                 ):
 
                     text = item.strip()
+
 
                     if text:
 
@@ -586,10 +634,12 @@ st.title(
     "📚 가구부문통계조사 챗봇"
 )
 
+
 st.caption(
     "가구부문 통계조사 업무자료를 기반으로 "
     "질문에 답변하는 AI 챗봇"
 )
+
 
 st.divider()
 
@@ -618,7 +668,7 @@ with st.sidebar:
 
 
     st.write(
-        "**OCR 시스템 상태**"
+        "**OCR 상태**"
     )
 
 
@@ -631,13 +681,14 @@ with st.sidebar:
     else:
 
         st.error(
-            "❌ RapidOCR 설치 오류"
+            "❌ RapidOCR 오류"
         )
 
 
     st.write(
         f"RapidOCR: {RAPIDOCR_VERSION}"
     )
+
 
     st.write(
         f"ONNX Runtime: {ONNXRUNTIME_VERSION}"
@@ -679,12 +730,46 @@ with st.sidebar:
 
 
         st.write(
-            "모델 폴더"
+            "모델 저장 위치"
         )
 
         st.code(
             MODEL_DIR
         )
+
+
+        st.write(
+            "Pillow"
+        )
+
+        if PIL_SUPPORT:
+
+            st.success(
+                "정상"
+            )
+
+        else:
+
+            st.error(
+                PIL_ERROR
+            )
+
+
+        st.write(
+            "HEIC"
+        )
+
+        if HEIC_SUPPORT:
+
+            st.success(
+                "지원"
+            )
+
+        else:
+
+            st.warning(
+                "미지원"
+            )
 
 
         st.write(
@@ -745,6 +830,7 @@ if menu == "질문하기":
             st.write(
                 "입력하신 질문:"
             )
+
 
             st.write(
                 question
@@ -826,8 +912,8 @@ elif menu == "자료관리":
 
 
     st.write(
-        "JPG, JPEG, PNG, WEBP, HEIC, HEIF 등 "
-        "이미지 파일을 선택할 수 있습니다."
+        "JPG, JPEG, PNG, WEBP, HEIC, HEIF, BMP 파일을 "
+        "선택할 수 있습니다."
     )
 
 
@@ -970,7 +1056,10 @@ elif menu == "자료관리":
                             "추출된 텍스트",
                             full_text,
                             height=500,
-                            key=f"pdf_text_{file.name}"
+                            key=(
+                                f"pdf_text_"
+                                f"{file.name}"
+                            )
                         )
 
 
@@ -1005,7 +1094,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # TXT 내용 확인
+    # TXT
     # ========================================================
 
     if txt_files:
@@ -1049,7 +1138,10 @@ elif menu == "자료관리":
                         "TXT 내용",
                         content,
                         height=400,
-                        key=f"txt_text_{file.name}"
+                        key=(
+                            f"txt_text_"
+                            f"{file.name}"
+                        )
                     )
 
 
@@ -1071,7 +1163,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # 사진 처리 + OCR
+    # 사진 + OCR
     # ========================================================
 
     if image_files:
@@ -1134,7 +1226,7 @@ elif menu == "자료관리":
 
 
                 # --------------------------------------------
-                # 이미지 열기
+                # 이미지 읽기
                 # --------------------------------------------
 
                 try:
@@ -1166,6 +1258,7 @@ elif menu == "자료관리":
                     st.write(
                         "**실제 이미지 포맷**"
                     )
+
 
                     st.code(
                         str(image.format)
@@ -1199,6 +1292,7 @@ elif menu == "자료관리":
                             "RapidOCR을 사용할 수 없습니다."
                         )
 
+
                         st.code(
                             OCR_IMPORT_ERROR
                         )
@@ -1208,12 +1302,16 @@ elif menu == "자료관리":
 
                         if st.button(
                             "🔎 이 사진 OCR 실행",
-                            key=f"ocr_button_{index}_{file.name}",
+                            key=(
+                                f"ocr_button_"
+                                f"{index}_"
+                                f"{file.name}"
+                            ),
                             use_container_width=True
                         ):
 
                             # --------------------------------
-                            # 모델 준비
+                            # 모델 다운로드
                             # --------------------------------
 
                             with st.spinner(
@@ -1225,11 +1323,13 @@ elif menu == "자료관리":
                                 )
 
 
-                            # 모델 상태 표시
+                            # --------------------------------
+                            # 모델 상태
+                            # --------------------------------
 
                             with st.expander(
                                 "📦 OCR 모델 상태",
-                                expanded=False
+                                expanded=True
                             ):
 
                                 for (
@@ -1260,15 +1360,15 @@ elif menu == "자료관리":
                                 )
 
                                 st.info(
-                                    "위의 OCR 모델 상태에서 "
-                                    "어떤 모델 다운로드가 실패했는지 확인해주세요."
+                                    "위의 모델 상태에서 "
+                                    "실패한 모델을 확인해주세요."
                                 )
 
                                 continue
 
 
                             # --------------------------------
-                            # OCR 엔진
+                            # OCR
                             # --------------------------------
 
                             with st.spinner(
@@ -1285,6 +1385,7 @@ elif menu == "자료관리":
                                 st.error(
                                     "OCR 실행 중 오류가 발생했습니다."
                                 )
+
 
                                 st.code(
                                     error
@@ -1340,4 +1441,4 @@ elif menu == "자료관리":
 
                     st.code(
                         repr(e)
-    )
+            )

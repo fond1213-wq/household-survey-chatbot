@@ -90,7 +90,7 @@ elif menu == "자료관리":
     st.subheader("📂 자료관리")
 
     st.write(
-        "가구부문통계조사 관련 PDF, TXT, 사진 자료를 "
+        "가구부문 통계조사 관련 PDF, TXT, 사진 자료를 "
         "등록할 수 있습니다."
     )
 
@@ -98,7 +98,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # PDF 업로드
+    # PDF
     # ========================================================
 
     st.markdown("### 📄 PDF 자료")
@@ -107,12 +107,13 @@ elif menu == "자료관리":
         "PDF 파일을 선택하세요.",
         type=["pdf"],
         accept_multiple_files=True,
-        key="pdf_upload"
+        key="pdf_upload",
+        max_upload_size=50
     )
 
 
     # ========================================================
-    # TXT 업로드
+    # TXT
     # ========================================================
 
     st.markdown("### 📝 TXT 자료")
@@ -121,33 +122,29 @@ elif menu == "자료관리":
         "TXT 파일을 선택하세요.",
         type=["txt"],
         accept_multiple_files=True,
-        key="txt_upload"
+        key="txt_upload",
+        max_upload_size=50
     )
 
 
     # ========================================================
-    # 사진 업로드
+    # 사진
     # ========================================================
 
     st.markdown("### 📷 사진 자료")
+
+    st.write(
+        "JPG, JPEG, PNG, WEBP, HEIC 등 이미지 파일을 "
+        "선택할 수 있습니다."
+    )
 
     image_files = st.file_uploader(
-      "사진 파일을 선택하세요.",
-      type=None,
-      accept_multiple_files=True,
-      key="image_upload",
-      max_upload_size=50
+        "사진 파일을 선택하세요.",
+        type=None,
+        accept_multiple_files=True,
+        key="image_upload",
+        max_upload_size=50
     )
-
-    st.markdown("### 📷 사진 자료")
-
-    if image_files:
-       st.success(f"사진 {len(image_files)}개가 업로드되었습니다.")
-
-       for file in image_files:
-         st.write("파일명:", file.name)
-         st.write("파일 형식:", file.type)
-         st.write("파일 크기:", f"{file.size / 1024 / 1024:.2f} MB")
 
 
     # ========================================================
@@ -159,23 +156,38 @@ elif menu == "자료관리":
     st.subheader("📊 업로드 현황")
 
     pdf_count = len(pdf_files) if pdf_files else 0
+
     txt_count = len(txt_files) if txt_files else 0
+
     image_count = len(image_files) if image_files else 0
+
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric("📄 PDF", pdf_count)
+
+        st.metric(
+            "📄 PDF",
+            pdf_count
+        )
 
     with col2:
-        st.metric("📝 TXT", txt_count)
+
+        st.metric(
+            "📝 TXT",
+            txt_count
+        )
 
     with col3:
-        st.metric("📷 사진", image_count)
+
+        st.metric(
+            "📷 사진",
+            image_count
+        )
 
 
     # ========================================================
-    # PDF 텍스트 추출
+    # PDF 내용 확인
     # ========================================================
 
     if pdf_files:
@@ -208,12 +220,13 @@ elif menu == "자료관리":
                     if text:
 
                         full_text += (
-                            f"\n\n"
+                            "\n\n"
                             f"===== 페이지 {page_number} ====="
-                            f"\n\n"
+                            "\n\n"
                         )
 
                         full_text += text
+
 
                 with st.expander(
                     f"📄 {file.name}"
@@ -243,13 +256,16 @@ elif menu == "자료관리":
                             "스캔 PDF일 가능성이 있습니다."
                         )
 
+
             except Exception as e:
 
                 st.error(
                     f"{file.name} 처리 중 오류가 발생했습니다."
                 )
 
-                st.code(str(e))
+                st.code(
+                    str(e)
+                )
 
 
     # ========================================================
@@ -270,6 +286,7 @@ elif menu == "자료관리":
 
                 content_bytes = file.read()
 
+
                 try:
 
                     content = content_bytes.decode(
@@ -281,6 +298,7 @@ elif menu == "자료관리":
                     content = content_bytes.decode(
                         "cp949"
                     )
+
 
                 with st.expander(
                     f"📝 {file.name}"
@@ -297,13 +315,16 @@ elif menu == "자료관리":
                         "TXT 파일을 정상적으로 읽었습니다."
                     )
 
+
             except Exception as e:
 
                 st.error(
                     f"{file.name} 파일을 읽을 수 없습니다."
                 )
 
-                st.code(str(e))
+                st.code(
+                    str(e)
+                )
 
 
     # ========================================================
@@ -314,20 +335,66 @@ elif menu == "자료관리":
 
         st.divider()
 
-        st.subheader("📷 사진 자료")
+        st.subheader("📷 업로드된 사진")
 
-        for file in image_files:
+        for index, file in enumerate(image_files):
 
             with st.expander(
-                f"📷 {file.name}"
+                f"📷 {file.name}",
+                expanded=True
             ):
 
-                st.image(
-                    file,
-                    caption=file.name,
-                    use_container_width=True
+                st.write(
+                    "파일명:",
+                    file.name
                 )
 
-                st.success(
-                    f"{file.name} 사진을 정상적으로 업로드했습니다."
+                st.write(
+                    "파일 형식:",
+                    file.type
+                )
+
+                st.write(
+                    "파일 크기:",
+                    f"{file.size / 1024 / 1024:.2f} MB"
+                )
+
+
+                # 이미지로 인식되는 파일만 화면에 표시
+                if file.type and file.type.startswith("image/"):
+
+                    try:
+
+                        file.seek(0)
+
+                        st.image(
+                            file,
+                            caption=file.name,
+                            use_container_width=True
+                        )
+
+                        st.success(
+                            "사진이 정상적으로 업로드되었습니다."
+                        )
+
+                    except Exception as e:
+
+                        st.warning(
+                            "파일은 업로드되었지만 "
+                            "현재 화면에서 이미지를 표시할 수 없습니다."
+                        )
+
+                        st.code(
+                            str(e)
+                        )
+
+                else:
+
+                    st.warning(
+                        "파일은 업로드되었지만 "
+                        "이미지 MIME 형식으로 인식되지 않았습니다."
+                    )
+
+                st.info(
+                    "OCR 기능은 다음 단계에서 연결합니다."
                 )

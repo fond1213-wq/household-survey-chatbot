@@ -5,3 +5,4 @@ pillow-heif
 rapidocr>=3.9.2
 onnxruntime
 numpy
+requests

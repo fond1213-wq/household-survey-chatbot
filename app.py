@@ -12,10 +12,13 @@ from pypdf import PdfReader
 
 try:
     from pillow_heif import register_heif_opener
+
     register_heif_opener()
     HEIC_SUPPORT = True
     HEIC_ERROR = ""
+
 except Exception as e:
+
     HEIC_SUPPORT = False
     HEIC_ERROR = repr(e)
 
@@ -26,13 +29,16 @@ except Exception as e:
 
 OCR_SUPPORT = False
 OCR_ERROR = ""
+
 RAPIDOCR_VERSION = "확인 불가"
 ONNXRUNTIME_VERSION = "확인 불가"
+
 
 try:
     RAPIDOCR_VERSION = importlib.metadata.version("rapidocr")
 except Exception:
     pass
+
 
 try:
     ONNXRUNTIME_VERSION = importlib.metadata.version("onnxruntime")
@@ -41,17 +47,19 @@ except Exception:
 
 
 try:
+
     from rapidocr import RapidOCR
 
     OCR_SUPPORT = True
 
 except Exception as e:
+
     OCR_SUPPORT = False
     OCR_ERROR = repr(e)
 
 
 # ============================================================
-# Streamlit 기본 설정
+# Streamlit 설정
 # ============================================================
 
 st.set_page_config(
@@ -69,19 +77,21 @@ st.set_page_config(
 def get_ocr_engine():
 
     if not OCR_SUPPORT:
+
         raise RuntimeError(
-            "RapidOCR import 실패:\n"
-            + OCR_ERROR
+            OCR_ERROR
         )
 
     try:
+
         engine = RapidOCR()
+
         return engine
 
     except Exception as e:
+
         raise RuntimeError(
-            "RapidOCR 엔진 초기화 실패:\n"
-            + repr(e)
+            repr(e)
         )
 
 
@@ -92,28 +102,133 @@ def get_ocr_engine():
 def run_ocr(pil_image):
 
     try:
+
         import numpy as np
 
-        image_array = np.array(pil_image)
+        image_array = np.array(
+            pil_image.convert("RGB")
+        )
 
         engine = get_ocr_engine()
 
-        result = engine(image_array)
+        result = engine(
+            image_array
+        )
 
-        return result
+        return result, None
 
     except Exception as e:
 
-        return {
-            "error": repr(e)
-        }
+        return None, repr(e)
+
+
+# ============================================================
+# OCR 텍스트 추출
+# ============================================================
+
+def extract_ocr_text(result):
+
+    texts = []
+
+    try:
+
+        # ----------------------------------------------------
+        # 최신 RapidOCR 결과 객체
+        # ----------------------------------------------------
+
+        if hasattr(result, "txts"):
+
+            txts = result.txts
+
+            if txts is not None:
+
+                for text in txts:
+
+                    if text is not None:
+
+                        text = str(text).strip()
+
+                        if text:
+
+                            texts.append(text)
+
+            return texts
+
+
+        # ----------------------------------------------------
+        # tuple 형태 결과
+        # ----------------------------------------------------
+
+        if isinstance(result, tuple):
+
+            for item in result:
+
+                if hasattr(item, "txts"):
+
+                    txts = item.txts
+
+                    if txts is not None:
+
+                        for text in txts:
+
+                            if text is not None:
+
+                                text = str(text).strip()
+
+                                if text:
+
+                                    texts.append(text)
+
+                        return texts
+
+
+        # ----------------------------------------------------
+        # list 형태 결과
+        # ----------------------------------------------------
+
+        if isinstance(result, list):
+
+            for item in result:
+
+                if isinstance(item, str):
+
+                    text = item.strip()
+
+                    if text:
+
+                        texts.append(text)
+
+                elif isinstance(item, (list, tuple)):
+
+                    for value in item:
+
+                        if isinstance(
+                            value,
+                            str
+                        ):
+
+                            text = value.strip()
+
+                            if text:
+
+                                texts.append(text)
+
+
+    except Exception:
+
+        pass
+
+
+    return texts
 
 
 # ============================================================
 # 제목
 # ============================================================
 
-st.title("📚 가구부문통계조사 챗봇")
+st.title(
+    "📚 가구부문통계조사 챗봇"
+)
 
 st.caption(
     "가구부문 통계조사 업무자료를 기반으로 "
@@ -141,40 +256,68 @@ with st.sidebar:
 
     st.divider()
 
-    # HEIC 상태
     st.write("**HEIC 지원**")
 
     if HEIC_SUPPORT:
-        st.success("✅ 지원")
-    else:
-        st.warning("❌ 지원 안 됨")
 
-    # OCR 상태
+        st.success(
+            "✅ 지원"
+        )
+
+    else:
+
+        st.warning(
+            "❌ 지원 안 됨"
+        )
+
+
     st.write("**OCR 지원**")
 
     if OCR_SUPPORT:
-        st.success("✅ RapidOCR 지원")
+
+        st.success(
+            "✅ RapidOCR 지원"
+        )
+
     else:
-        st.error("❌ RapidOCR 지원 안 됨")
+
+        st.error(
+            "❌ RapidOCR 지원 안 됨"
+        )
+
 
     st.divider()
 
-    # ========================================================
-    # OCR 진단 정보
-    # ========================================================
+    with st.expander(
+        "🔧 시스템 진단"
+    ):
 
-    with st.expander("🔧 시스템 진단"):
+        st.write(
+            "Python 버전"
+        )
 
-        st.write("Python 버전")
-        st.code(sys.version)
+        st.code(
+            sys.version
+        )
 
-        st.write("RapidOCR 버전")
-        st.code(RAPIDOCR_VERSION)
 
-        st.write("ONNX Runtime 버전")
-        st.code(ONNXRUNTIME_VERSION)
+        st.write(
+            "RapidOCR 버전"
+        )
 
-        st.write("RapidOCR import 상태")
+        st.code(
+            RAPIDOCR_VERSION
+        )
+
+
+        st.write(
+            "ONNX Runtime 버전"
+        )
+
+        st.code(
+            ONNXRUNTIME_VERSION
+        )
+
 
         if OCR_SUPPORT:
 
@@ -192,14 +335,6 @@ with st.sidebar:
                 OCR_ERROR
             )
 
-        if not HEIC_SUPPORT:
-
-            st.write("HEIC 오류")
-
-            st.code(
-                HEIC_ERROR
-            )
-
 
 # ============================================================
 # 질문하기
@@ -207,13 +342,16 @@ with st.sidebar:
 
 if menu == "질문하기":
 
-    st.subheader("💬 질문하기")
+    st.subheader(
+        "💬 질문하기"
+    )
 
     question = st.text_area(
         "궁금한 내용을 입력하세요.",
         placeholder="예: 취업자는 어떤 기준으로 판단하나요?",
         height=120
     )
+
 
     if st.button(
         "🔍 질문하기",
@@ -227,9 +365,13 @@ if menu == "질문하기":
                 "추후 AI가 등록된 자료를 검색하여 답변하도록 연결합니다."
             )
 
-            st.write("입력하신 질문:")
+            st.write(
+                "입력하신 질문:"
+            )
 
-            st.write(question)
+            st.write(
+                question
+            )
 
         else:
 
@@ -244,7 +386,9 @@ if menu == "질문하기":
 
 elif menu == "자료관리":
 
-    st.subheader("📂 자료관리")
+    st.subheader(
+        "📂 자료관리"
+    )
 
     st.write(
         "가구부문 통계조사 관련 PDF, TXT, 사진 자료를 "
@@ -258,13 +402,15 @@ elif menu == "자료관리":
     # PDF
     # ========================================================
 
-    st.markdown("### 📄 PDF 자료")
+    st.markdown(
+        "### 📄 PDF 자료"
+    )
 
     pdf_files = st.file_uploader(
         "PDF 파일을 선택하세요.",
         type=["pdf"],
         accept_multiple_files=True,
-        key="pdf_upload",
+        key="pdf_upload"
     )
 
 
@@ -272,21 +418,25 @@ elif menu == "자료관리":
     # TXT
     # ========================================================
 
-    st.markdown("### 📝 TXT 자료")
+    st.markdown(
+        "### 📝 TXT 자료"
+    )
 
     txt_files = st.file_uploader(
         "TXT 파일을 선택하세요.",
         type=["txt"],
         accept_multiple_files=True,
-        key="txt_upload",
+        key="txt_upload"
     )
 
 
     # ========================================================
-    # 사진
+    # 이미지
     # ========================================================
 
-    st.markdown("### 📷 사진 자료")
+    st.markdown(
+        "### 📷 사진 자료"
+    )
 
     st.write(
         "JPG, JPEG, PNG, WEBP, HEIC, HEIF 등 이미지 파일을 "
@@ -305,7 +455,7 @@ elif menu == "자료관리":
             "bmp"
         ],
         accept_multiple_files=True,
-        key="image_upload",
+        key="image_upload"
     )
 
 
@@ -315,11 +465,28 @@ elif menu == "자료관리":
 
     st.divider()
 
-    st.subheader("📊 업로드 현황")
+    st.subheader(
+        "📊 업로드 현황"
+    )
 
-    pdf_count = len(pdf_files) if pdf_files else 0
-    txt_count = len(txt_files) if txt_files else 0
-    image_count = len(image_files) if image_files else 0
+    pdf_count = (
+        len(pdf_files)
+        if pdf_files
+        else 0
+    )
+
+    txt_count = (
+        len(txt_files)
+        if txt_files
+        else 0
+    )
+
+    image_count = (
+        len(image_files)
+        if image_files
+        else 0
+    )
+
 
     col1, col2, col3 = st.columns(3)
 
@@ -346,14 +513,16 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # PDF 내용 확인
+    # PDF 처리
     # ========================================================
 
     if pdf_files:
 
         st.divider()
 
-        st.subheader("📄 PDF 내용 확인")
+        st.subheader(
+            "📄 PDF 내용 확인"
+        )
 
         for file in pdf_files:
 
@@ -423,19 +592,21 @@ elif menu == "자료관리":
                 )
 
                 st.code(
-                    str(e)
+                    repr(e)
                 )
 
 
     # ========================================================
-    # TXT 내용 확인
+    # TXT 처리
     # ========================================================
 
     if txt_files:
 
         st.divider()
 
-        st.subheader("📝 TXT 내용 확인")
+        st.subheader(
+            "📝 TXT 내용 확인"
+        )
 
         for file in txt_files:
 
@@ -481,19 +652,21 @@ elif menu == "자료관리":
                 )
 
                 st.code(
-                    str(e)
+                    repr(e)
                 )
 
 
     # ========================================================
-    # 이미지 + OCR
+    # 이미지 처리 + OCR
     # ========================================================
 
     if image_files:
 
         st.divider()
 
-        st.subheader("📷 업로드된 사진")
+        st.subheader(
+            "📷 업로드된 사진"
+        )
 
         for index, file in enumerate(
             image_files
@@ -512,7 +685,9 @@ elif menu == "자료관리":
 
                 with col_a:
 
-                    st.write("**파일명**")
+                    st.write(
+                        "**파일명**"
+                    )
 
                     st.code(
                         file.name
@@ -520,7 +695,9 @@ elif menu == "자료관리":
 
                 with col_b:
 
-                    st.write("**MIME 타입**")
+                    st.write(
+                        "**MIME 타입**"
+                    )
 
                     st.code(
                         str(file.type)
@@ -528,7 +705,9 @@ elif menu == "자료관리":
 
                 with col_c:
 
-                    st.write("**크기**")
+                    st.write(
+                        "**크기**"
+                    )
 
                     st.code(
                         f"{file.size / 1024 / 1024:.2f} MB"
@@ -545,32 +724,47 @@ elif menu == "자료관리":
 
                     image_bytes = file.read()
 
-                    file.seek(0)
-
-                    from PIL import Image
-
-                    pil_img = Image.open(
-                        io.BytesIO(image_bytes)
+                    image = st.session_state.get(
+                        f"image_{index}_{file.name}"
                     )
 
-                    fmt = pil_img.format
+                    if image is None:
 
-                    st.write("**실제 포맷**")
+                        from PIL import Image
+
+                        image = Image.open(
+                            io.BytesIO(
+                                image_bytes
+                            )
+                        )
+
+                        image.load()
+
+                        st.session_state[
+                            f"image_{index}_{file.name}"
+                        ] = image
+
+
+                    # ----------------------------------------
+                    # 이미지 표시
+                    # ----------------------------------------
+
+                    st.write(
+                        "**실제 이미지 포맷**"
+                    )
 
                     st.code(
-                        str(fmt)
+                        str(image.format)
                     )
 
-
                     st.image(
-                        pil_img,
+                        image,
                         caption=file.name,
                         use_container_width=True
                     )
 
-
                     st.success(
-                        "사진이 정상적으로 업로드되었습니다."
+                        "사진을 정상적으로 읽었습니다."
                     )
 
 
@@ -578,142 +772,88 @@ elif menu == "자료관리":
                     # OCR
                     # ========================================
 
-                    st.markdown("### 🔎 OCR 결과")
+                    st.markdown(
+                        "### 🔎 OCR"
+                    )
 
 
                     if not OCR_SUPPORT:
 
                         st.error(
-                            "현재 RapidOCR이 설치되지 않았거나 "
-                            "불러오기에 실패했습니다."
+                            "RapidOCR을 사용할 수 없습니다."
                         )
 
-                        st.info(
-                            "왼쪽 사이드바의 "
-                            "'🔧 시스템 진단'을 열어 "
-                            "실제 오류를 확인해주세요."
+                        st.code(
+                            OCR_ERROR
                         )
 
 
                     else:
 
-                        with st.spinner(
-                            "사진에서 글자를 인식하고 있습니다..."
+                        if st.button(
+                            "🔎 이 사진 OCR 실행",
+                            key=f"ocr_button_{index}_{file.name}",
+                            use_container_width=True
                         ):
 
-                            ocr_result = run_ocr(
-                                pil_img
-                            )
+                            with st.spinner(
+                                "사진의 글자를 인식하고 있습니다..."
+                            ):
+
+                                result, error = run_ocr(
+                                    image
+                                )
 
 
-                        # ------------------------------------
-                        # OCR 오류
-                        # ------------------------------------
+                            if error:
 
-                        if isinstance(
-                            ocr_result,
-                            dict
-                        ) and "error" in ocr_result:
+                                st.error(
+                                    "OCR 실행 중 오류가 발생했습니다."
+                                )
 
-                            st.error(
-                                "OCR 실행 중 오류가 발생했습니다."
-                            )
+                                st.code(
+                                    error
+                                )
 
-                            st.code(
-                                ocr_result["error"]
-                            )
+                            else:
 
-
-                        else:
-
-                            st.write(
-                                "OCR 원본 결과"
-                            )
-
-                            st.write(
-                                ocr_result
-                            )
+                                texts = extract_ocr_text(
+                                    result
+                                )
 
 
-                            # -------------------------------
-                            # 텍스트 추출
-                            # -------------------------------
-
-                            try:
-
-                                ocr_texts = []
-
-                                if hasattr(
-                                    ocr_result,
-                                    "txts"
-                                ):
-
-                                    ocr_texts = (
-                                        ocr_result.txts
-                                    )
-
-                                elif isinstance(
-                                    ocr_result,
-                                    tuple
-                                ):
-
-                                    # RapidOCR 버전에 따라
-                                    # 결과 구조가 다를 수 있음
-
-                                    first = ocr_result[0]
-
-                                    if hasattr(
-                                        first,
-                                        "txts"
-                                    ):
-
-                                        ocr_texts = (
-                                            first.txts
-                                        )
-
-
-                                if ocr_texts:
-
-                                    st.text_area(
-                                        "📝 인식된 텍스트",
-                                        "\n".join(
-                                            ocr_texts
-                                        ),
-                                        height=300,
-                                        key=f"ocr_text_{index}_{file.name}"
-                                    )
+                                if texts:
 
                                     st.success(
-                                        f"{len(ocr_texts)}개의 "
+                                        f"{len(texts)}개의 "
                                         "텍스트 영역을 인식했습니다."
+                                    )
+
+                                    ocr_text = "\n".join(
+                                        texts
+                                    )
+
+                                    st.text_area(
+                                        "📝 OCR 인식 결과",
+                                        ocr_text,
+                                        height=300,
+                                        key=f"ocr_result_{index}_{file.name}"
                                     )
 
                                 else:
 
                                     st.warning(
-                                        "OCR은 실행되었지만 "
-                                        "인식된 텍스트가 없습니다."
+                                        "OCR은 실행됐지만 "
+                                        "인식된 글자가 없습니다."
                                     )
-
-                            except Exception as e:
-
-                                st.warning(
-                                    "OCR 결과에서 텍스트를 "
-                                    "추출하는 과정에서 문제가 발생했습니다."
-                                )
-
-                                st.code(
-                                    repr(e)
-                                )
 
 
                 except Exception as e:
 
-                    st.warning(
-                        "파일은 업로드되었지만 "
+                    st.error(
                         "이미지를 처리할 수 없습니다."
                     )
 
                     st.code(
                         repr(e)
-                    )
+                                    )

@@ -57,6 +57,21 @@ except Exception as e:
 
 
 # ============================================================
+# Supabase 지원 확인
+# ============================================================
+
+SUPABASE_SUPPORT = False
+SUPABASE_ERROR = ""
+
+try:
+    from supabase import create_client
+    SUPABASE_SUPPORT = True
+except Exception as e:
+    SUPABASE_SUPPORT = False
+    SUPABASE_ERROR = repr(e)
+
+
+# ============================================================
 # Streamlit 설정
 # ============================================================
 
@@ -68,40 +83,130 @@ st.set_page_config(
 
 
 # ============================================================
-# 🔑 API 키 로드 (Secrets 우선, 환경변수 폴백)
+# 🔑 API 키 로드
 # ============================================================
 
-GEMINI_API_KEY = None
+def _load_secret(key):
+    """Secrets 우선, 환경변수 폴백으로 값을 불러옵니다."""
+    value = None
+    try:
+        value = st.secrets[key]
+    except Exception:
+        pass
+    if not value:
+        value = os.getenv(key)
+    return value.strip() if value else None
 
-try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-except Exception:
-    pass
 
-if not GEMINI_API_KEY:
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = _load_secret("GEMINI_API_KEY")
+SUPABASE_URL = _load_secret("SUPABASE_URL")
+SUPABASE_KEY = _load_secret("SUPABASE_KEY")
+SUPABASE_BUCKET = _load_secret("SUPABASE_BUCKET") or "chatbot-uploads"
 
 if not GEMINI_API_KEY:
     st.error("GEMINI_API_KEY가 설정되지 않았습니다.")
-    with st.expander("🔧 진단"):
-        try:
-            st.write("Secrets 키 목록:", list(st.secrets.keys()))
-        except Exception as e:
-            st.write("st.secrets 오류:", repr(e))
     st.stop()
 
-GEMINI_API_KEY = GEMINI_API_KEY.strip()
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error(
+        "SUPABASE_URL 또는 SUPABASE_KEY가 설정되지 않았습니다. "
+        "자료 영구 저장을 위해 필요합니다."
+    )
+    st.stop()
 
 
 # ============================================================
-# ⚙️ 사용할 Gemini 모델 (고정)
+# ⚙️ 사용할 Gemini 모델
 # ============================================================
 
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 
 
 # ============================================================
-# 🗂️ 세션 상태 초기화 (업로드 파일 보존)
+# 🗂️ Supabase 클라이언트
+# ============================================================
+
+@st.cache_resource
+def get_supabase():
+    if not SUPABASE_SUPPORT:
+        raise RuntimeError(SUPABASE_ERROR)
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+# ============================================================
+# ☁️ Supabase Storage 유틸
+# ============================================================
+
+CATEGORY_PDF = "pdfs"
+CATEGORY_TXT = "txts"
+CATEGORY_IMAGE = "images"
+
+
+def upload_to_storage(file_bytes: bytes, file_name: str, category: str):
+    """파일을 Supabase Storage에 업로드(덮어쓰기)합니다."""
+    supabase = get_supabase()
+    path = f"{category}/{file_name}"
+    supabase.storage.from_(SUPABASE_BUCKET).upload(
+        path=path,
+        file=file_bytes,
+        file_options={
+            "upsert": "true",
+            "content-type": "application/octet-stream",
+        },
+    )
+    return path
+
+
+def list_storage(category: str):
+    """특정 카테고리의 파일 목록을 반환합니다."""
+    supabase = get_supabase()
+    try:
+        items = supabase.storage.from_(SUPABASE_BUCKET).list(category)
+    except Exception:
+        return []
+    result = []
+    for item in items or []:
+        name = item.get("name") if isinstance(item, dict) else getattr(item, "name", None)
+        if name:
+            result.append(name)
+    return result
+
+
+def download_from_storage(category: str, file_name: str) -> bytes:
+    """Storage에서 파일을 다운로드하여 bytes로 반환합니다."""
+    supabase = get_supabase()
+    data = supabase.storage.from_(SUPABASE_BUCKET).download(
+        f"{category}/{file_name}"
+    )
+    return data
+
+
+def delete_from_storage(category: str, file_name: str):
+    """Storage에서 파일을 삭제합니다."""
+    supabase = get_supabase()
+    supabase.storage.from_(SUPABASE_BUCKET).remove(
+        [f"{category}/{file_name}"]
+    )
+
+
+def load_all_files_from_storage():
+    """세 카테고리의 모든 파일을 세션 상태에 로드합니다."""
+    for category, session_key in [
+        (CATEGORY_PDF, "saved_pdfs"),
+        (CATEGORY_TXT, "saved_txts"),
+        (CATEGORY_IMAGE, "saved_images"),
+    ]:
+        file_names = list_storage(category)
+        for name in file_names:
+            try:
+                data = download_from_storage(category, name)
+                st.session_state[session_key][name] = data
+            except Exception:
+                continue
+
+
+# ============================================================
+# 🗂️ 세션 상태 초기화
 # ============================================================
 
 if "saved_pdfs" not in st.session_state:
@@ -119,9 +224,17 @@ if "ocr_results" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+if "storage_loaded" not in st.session_state:
+    with st.spinner("☁️ 저장된 자료를 불러오는 중..."):
+        try:
+            load_all_files_from_storage()
+        except Exception as e:
+            st.warning(f"저장된 자료 로드 실패: {e}")
+    st.session_state.storage_loaded = True
+
 
 # ============================================================
-# 🤖 Gemini 클라이언트 (google-genai SDK)
+# 🤖 Gemini 클라이언트
 # ============================================================
 
 @st.cache_resource
@@ -134,10 +247,6 @@ def call_gemini(
     model: str = GEMINI_MODEL,
     system_prompt: str = None,
 ) -> str:
-    """
-    Gemini API를 호출하여 답변을 반환합니다.
-    기본 모델: gemini-3.5-flash-lite
-    """
     if system_prompt is None:
         system_prompt = (
             "당신은 가구부문 통계조사 업무를 돕는 "
@@ -146,7 +255,6 @@ def call_gemini(
         )
 
     client = get_gemini_client()
-
     response = client.models.generate_content(
         model=model,
         contents=question,
@@ -156,56 +264,39 @@ def call_gemini(
             max_output_tokens=2000,
         ),
     )
-
     return response.text
 
 
 # ============================================================
-# 🔬 진단 함수들
+# 🔬 진단
 # ============================================================
 
-def list_gemini_models() -> dict:
-    """사용 가능한 Gemini 모델 목록을 반환합니다."""
-    try:
-        client = get_gemini_client()
-        models = list(client.models.list())
-
-        available = []
-        for m in models:
-            name = getattr(m, "name", "")
-            if "gemini" in name.lower():
-                available.append(name)
-
-        return {"ok": True, "models": available, "error": None}
-    except Exception as e:
-        return {"ok": False, "models": [], "error": repr(e)}
-
-
 def test_gemini_model() -> dict:
-    """현재 설정된 모델로 테스트 호출을 수행합니다."""
     try:
         client = get_gemini_client()
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents="ping",
         )
-        return {
-            "ok": True,
-            "model": GEMINI_MODEL,
-            "message": response.text[:100],
-            "error": None,
-        }
+        return {"ok": True, "model": GEMINI_MODEL, "message": response.text[:100], "error": None}
     except Exception as e:
-        return {
-            "ok": False,
-            "model": GEMINI_MODEL,
-            "message": None,
-            "error": repr(e),
-        }
+        return {"ok": False, "model": GEMINI_MODEL, "message": None, "error": repr(e)}
+
+
+def test_supabase() -> dict:
+    try:
+        supabase = get_supabase()
+        buckets = supabase.storage.list_buckets()
+        names = []
+        for b in buckets or []:
+            names.append(getattr(b, "name", str(b)))
+        return {"ok": True, "buckets": names, "error": None}
+    except Exception as e:
+        return {"ok": False, "buckets": [], "error": repr(e)}
 
 
 # ============================================================
-# OCR 엔진 (한국어 특화)
+# OCR 엔진
 # ============================================================
 
 @st.cache_resource
@@ -220,12 +311,10 @@ def get_ocr_engine():
                 "Det.lang_type": LangDet.MULTI,
                 "Det.model_type": ModelType.MOBILE,
                 "Det.ocr_version": OCRVersion.PPOCRV5,
-
                 "Rec.engine_type": EngineType.ONNXRUNTIME,
                 "Rec.lang_type": LangRec.KOREAN,
                 "Rec.model_type": ModelType.MOBILE,
                 "Rec.ocr_version": OCRVersion.PPOCRV5,
-
                 "Cls.engine_type": EngineType.ONNXRUNTIME,
                 "Cls.lang_type": LangDet.CH,
                 "Cls.model_type": ModelType.MOBILE,
@@ -233,7 +322,6 @@ def get_ocr_engine():
             }
         )
         return engine
-
     except Exception as e:
         try:
             st.warning(f"한국어 모델 로드 실패. 기본 모델로 대체합니다. (원인: {e})")
@@ -258,10 +346,6 @@ def get_ocr_engine():
             raise RuntimeError(f"OCR 엔진 초기화 실패: {repr(e2)}")
 
 
-# ============================================================
-# OCR 실행
-# ============================================================
-
 def run_ocr(pil_image):
     try:
         import numpy as np
@@ -272,10 +356,6 @@ def run_ocr(pil_image):
     except Exception as e:
         return None, repr(e)
 
-
-# ============================================================
-# OCR 텍스트 추출
-# ============================================================
 
 def extract_ocr_text(result):
     texts = []
@@ -337,85 +417,68 @@ st.divider()
 
 with st.sidebar:
     st.header("📂 메뉴")
-    menu = st.radio(
-        "이동",
-        ["질문하기", "자료관리"]
-    )
+    menu = st.radio("이동", ["질문하기", "자료관리"])
     st.divider()
 
     st.write("**HEIC 지원**")
-    if HEIC_SUPPORT:
-        st.success("✅ 지원")
-    else:
-        st.warning("❌ 지원 안 됨")
+    st.success("✅ 지원") if HEIC_SUPPORT else st.warning("❌ 지원 안 됨")
 
     st.write("**OCR 지원**")
-    if OCR_SUPPORT:
-        st.success("✅ RapidOCR v3 지원")
-    else:
-        st.error("❌ RapidOCR 지원 안 됨")
+    st.success("✅ RapidOCR v3") if OCR_SUPPORT else st.error("❌ 지원 안 됨")
+
+    st.write("**영구 저장 (Supabase)**")
+    st.success("✅ 연결됨") if SUPABASE_SUPPORT else st.error("❌ 미지원")
 
     st.write("**AI 모델**")
     st.code(GEMINI_MODEL)
 
     st.divider()
 
-    # ========================================================
-    # 🔬 진단 도구
-    # ========================================================
-
     with st.expander("🔧 시스템 진단"):
         st.write("Python 버전")
         st.code(sys.version)
-
         st.write("RapidOCR 버전")
         st.code(RAPIDOCR_VERSION)
-
         st.write("ONNX Runtime 버전")
         st.code(ONNXRUNTIME_VERSION)
-
-        st.write("Gemini API 키 앞 8자리")
+        st.write("Gemini 키 앞 8자리")
         st.code(GEMINI_API_KEY[:8] if GEMINI_API_KEY else "없음")
-
-        st.write("Gemini API 키 길이")
-        st.code(str(len(GEMINI_API_KEY)) if GEMINI_API_KEY else "0")
-
-        st.write("Gemini 모델")
-        st.code(GEMINI_MODEL)
-
-        if OCR_SUPPORT:
-            st.success("RapidOCR import 성공")
-        else:
-            st.error("RapidOCR import 실패")
-            st.code(OCR_ERROR)
+        st.write("Supabase URL")
+        st.code(SUPABASE_URL or "없음")
+        st.write("Supabase 버킷")
+        st.code(SUPABASE_BUCKET)
 
     st.divider()
-    st.write("**🔬 Gemini 진단 도구**")
 
-    # --- 모델 목록 확인 버튼 ---
-    if st.button("📋 모델 목록 확인", use_container_width=True):
-        with st.spinner("모델 목록 조회 중..."):
-            result = list_gemini_models()
+    if st.button("🔑 Gemini 테스트", use_container_width=True):
+        with st.spinner("테스트 중..."):
+            r = test_gemini_model()
+        if r["ok"]:
+            st.success(f"✅ {r['model']}")
+            st.caption(f"응답: {r['message']}")
+        else:
+            st.error("❌ 실패")
+            st.code(r["error"])
 
-        if result["ok"]:
-            st.success(f"총 {len(result['models'])}개 모델 발견")
-            for name in result["models"]:
+    if st.button("☁️ Supabase 테스트", use_container_width=True):
+        with st.spinner("테스트 중..."):
+            r = test_supabase()
+        if r["ok"]:
+            st.success("✅ 연결 성공")
+            st.write("버킷 목록:")
+            for name in r["buckets"]:
                 st.code(name)
         else:
-            st.error("모델 목록 조회 실패")
-            st.code(result["error"])
+            st.error("❌ 실패")
+            st.code(r["error"])
 
-    # --- 모델 테스트 버튼 ---
-    if st.button("🔑 모델 테스트", use_container_width=True):
-        with st.spinner(f"{GEMINI_MODEL} 테스트 중..."):
-            result = test_gemini_model()
-
-        if result["ok"]:
-            st.success(f"✅ {result['model']} 정상 작동")
-            st.caption(f"응답: {result['message']}")
-        else:
-            st.error(f"❌ {result['model']} 호출 실패")
-            st.code(result["error"])
+    if st.button("🔄 저장소 새로고침", use_container_width=True):
+        st.session_state.saved_pdfs = {}
+        st.session_state.saved_txts = {}
+        st.session_state.saved_images = {}
+        st.session_state.ocr_results = {}
+        st.session_state.storage_loaded = False
+        st.rerun()
 
 
 # ============================================================
@@ -424,7 +487,6 @@ with st.sidebar:
 
 if menu == "질문하기":
     st.subheader("💬 질문하기")
-
     st.info(f"🤖 사용 모델: **{GEMINI_MODEL}**")
 
     question = st.text_area(
@@ -435,9 +497,7 @@ if menu == "질문하기":
 
     col_btn1, col_btn2 = st.columns([3, 1])
     with col_btn1:
-        ask_clicked = st.button(
-            "🔍 질문하기", use_container_width=True
-        )
+        ask_clicked = st.button("🔍 질문하기", use_container_width=True)
     with col_btn2:
         if st.button("🗑️ 대화 초기화", use_container_width=True):
             st.session_state.chat_history = []
@@ -448,37 +508,20 @@ if menu == "질문하기":
             with st.spinner(f"{GEMINI_MODEL} 모델로 답변 생성 중..."):
                 try:
                     answer = call_gemini(question, model=GEMINI_MODEL)
-
                     st.session_state.chat_history.append(
                         {"role": "user", "content": question}
                     )
                     st.session_state.chat_history.append(
                         {"role": "assistant", "content": answer}
                     )
-
                     st.success("답변")
                     st.write(answer)
-
                 except Exception as e:
                     st.error("Gemini 호출 중 오류가 발생했습니다.")
                     st.code(repr(e))
-
-                    with st.expander("🔧 오류 진단"):
-                        st.write("사용한 모델:", GEMINI_MODEL)
-                        st.write(
-                            "키 앞 8자리:",
-                            GEMINI_API_KEY[:8] if GEMINI_API_KEY else "없음"
-                        )
-                        st.info(
-                            "404 오류가 계속되면:\n"
-                            "1. 사이드바의 '📋 모델 목록 확인' 버튼으로 실제 모델명 확인\n"
-                            "2. '🔑 모델 테스트' 버튼으로 현재 모델 작동 확인\n"
-                            "3. google-genai 패키지가 최신인지 확인 (>=2.21.0)"
-                        )
         else:
             st.warning("질문을 입력해주세요.")
 
-    # 대화 기록 표시
     if st.session_state.chat_history:
         st.divider()
         st.subheader("💬 대화 기록")
@@ -498,7 +541,8 @@ elif menu == "자료관리":
     st.subheader("📂 자료관리")
     st.write(
         "가구부문 통계조사 관련 PDF, TXT, 사진 자료를 "
-        "등록할 수 있습니다."
+        "등록할 수 있습니다. 업로드된 자료는 **Supabase에 "
+        "영구 저장**되어 앱을 재시작해도 유지됩니다."
     )
     st.divider()
 
@@ -516,11 +560,21 @@ elif menu == "자료관리":
     if pdf_files:
         for f in pdf_files:
             f.seek(0)
-            st.session_state.saved_pdfs[f.name] = f.read()
+            data = f.read()
+            st.session_state.saved_pdfs[f.name] = data
+            try:
+                upload_to_storage(data, f.name, CATEGORY_PDF)
+            except Exception as e:
+                st.error(f"{f.name} 업로드 실패: {e}")
 
     if st.session_state.saved_pdfs:
         st.caption(f"📦 저장된 PDF: {len(st.session_state.saved_pdfs)}개")
-        if st.button("🗑️ PDF 목록 비우기", key="clear_pdfs"):
+        if st.button("🗑️ PDF 전체 삭제", key="clear_pdfs"):
+            for name in list(st.session_state.saved_pdfs.keys()):
+                try:
+                    delete_from_storage(CATEGORY_PDF, name)
+                except Exception:
+                    pass
             st.session_state.saved_pdfs = {}
             st.rerun()
 
@@ -538,11 +592,21 @@ elif menu == "자료관리":
     if txt_files:
         for f in txt_files:
             f.seek(0)
-            st.session_state.saved_txts[f.name] = f.read()
+            data = f.read()
+            st.session_state.saved_txts[f.name] = data
+            try:
+                upload_to_storage(data, f.name, CATEGORY_TXT)
+            except Exception as e:
+                st.error(f"{f.name} 업로드 실패: {e}")
 
     if st.session_state.saved_txts:
         st.caption(f"📦 저장된 TXT: {len(st.session_state.saved_txts)}개")
-        if st.button("🗑️ TXT 목록 비우기", key="clear_txts"):
+        if st.button("🗑️ TXT 전체 삭제", key="clear_txts"):
+            for name in list(st.session_state.saved_txts.keys()):
+                try:
+                    delete_from_storage(CATEGORY_TXT, name)
+                except Exception:
+                    pass
             st.session_state.saved_txts = {}
             st.rerun()
 
@@ -550,10 +614,6 @@ elif menu == "자료관리":
     # 이미지 업로더
     # --------------------------------------------------------
     st.markdown("### 📷 사진 자료")
-    st.write(
-        "JPG, JPEG, PNG, WEBP, HEIC, HEIF 등 이미지 파일을 "
-        "선택할 수 있습니다."
-    )
     image_files = st.file_uploader(
         "사진 파일을 선택하세요.",
         type=["jpg", "jpeg", "png", "webp", "heic", "heif", "bmp"],
@@ -564,11 +624,21 @@ elif menu == "자료관리":
     if image_files:
         for f in image_files:
             f.seek(0)
-            st.session_state.saved_images[f.name] = f.read()
+            data = f.read()
+            st.session_state.saved_images[f.name] = data
+            try:
+                upload_to_storage(data, f.name, CATEGORY_IMAGE)
+            except Exception as e:
+                st.error(f"{f.name} 업로드 실패: {e}")
 
     if st.session_state.saved_images:
         st.caption(f"📦 저장된 사진: {len(st.session_state.saved_images)}개")
-        if st.button("🗑️ 사진 목록 비우기", key="clear_images"):
+        if st.button("🗑️ 사진 전체 삭제", key="clear_images"):
+            for name in list(st.session_state.saved_images.keys()):
+                try:
+                    delete_from_storage(CATEGORY_IMAGE, name)
+                except Exception:
+                    pass
             st.session_state.saved_images = {}
             st.session_state.ocr_results = {}
             st.rerun()
@@ -579,17 +649,13 @@ elif menu == "자료관리":
     st.divider()
     st.subheader("📊 업로드 현황")
 
-    pdf_count = len(st.session_state.saved_pdfs)
-    txt_count = len(st.session_state.saved_txts)
-    image_count = len(st.session_state.saved_images)
-
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("📄 PDF", pdf_count)
+        st.metric("📄 PDF", len(st.session_state.saved_pdfs))
     with col2:
-        st.metric("📝 TXT", txt_count)
+        st.metric("📝 TXT", len(st.session_state.saved_txts))
     with col3:
-        st.metric("📷 사진", image_count)
+        st.metric("📷 사진", len(st.session_state.saved_images))
 
     # --------------------------------------------------------
     # PDF 내용 확인
@@ -602,7 +668,6 @@ elif menu == "자료관리":
             try:
                 reader = PdfReader(io.BytesIO(pdf_bytes))
                 full_text = ""
-
                 for page_number, page in enumerate(reader.pages, start=1):
                     text = page.extract_text()
                     if text:
@@ -622,14 +687,12 @@ elif menu == "자료관리":
                             key=f"pdf_text_{name}"
                         )
                         st.success(
-                            f"{len(reader.pages)}페이지에서 "
-                            "텍스트를 추출했습니다."
+                            f"{len(reader.pages)}페이지에서 텍스트를 추출했습니다."
                         )
                     else:
                         st.warning("PDF에서 텍스트를 찾지 못했습니다.")
-                        st.info("스캔 PDF일 가능성이 있습니다.")
             except Exception as e:
-                st.error(f"{name} 처리 중 오류가 발생했습니다.")
+                st.error(f"{name} 처리 중 오류")
                 st.code(repr(e))
 
     # --------------------------------------------------------
@@ -689,7 +752,6 @@ elif menu == "자료관리":
                 try:
                     image = Image.open(io.BytesIO(image_bytes))
                     image.load()
-
                     st.image(image, caption=name, use_container_width=True)
                     st.success("사진을 정상적으로 읽었습니다.")
 
@@ -706,29 +768,21 @@ elif menu == "자료관리":
                             key=f"ocr_button_{index}_{name}",
                             use_container_width=True
                         ):
-                            with st.spinner(
-                                "사진의 글자를 인식하고 있습니다..."
-                            ):
+                            with st.spinner("사진의 글자를 인식하고 있습니다..."):
                                 result, error = run_ocr(image)
 
                             if error:
-                                st.error("OCR 실행 중 오류가 발생했습니다.")
+                                st.error("OCR 실행 중 오류")
                                 st.code(error)
                             else:
                                 texts = extract_ocr_text(result)
                                 if texts:
-                                    st.session_state.ocr_results[
-                                        ocr_key
-                                    ] = "\n".join(texts)
+                                    st.session_state.ocr_results[ocr_key] = "\n".join(texts)
                                     st.success(
-                                        f"{len(texts)}개의 "
-                                        "텍스트 영역을 인식했습니다."
+                                        f"{len(texts)}개의 텍스트 영역을 인식했습니다."
                                     )
                                 else:
-                                    st.warning(
-                                        "OCR은 실행됐지만 "
-                                        "인식된 글자가 없습니다."
-                                    )
+                                    st.warning("인식된 글자가 없습니다.")
 
                         if ocr_key in st.session_state.ocr_results:
                             st.text_area(
@@ -737,7 +791,6 @@ elif menu == "자료관리":
                                 height=300,
                                 key=f"ocr_result_{index}_{name}"
                             )
-
                 except Exception as e:
                     st.error("이미지를 처리할 수 없습니다.")
                     st.code(repr(e))

@@ -5,7 +5,7 @@ import importlib.metadata
 
 import streamlit as st
 from pypdf import PdfReader
-from openai import OpenAI
+from ollama import Client
 
 # ============================================================
 # HEIC / HEIF 지원
@@ -109,14 +109,16 @@ if "ocr_results" not in st.session_state:
 
 
 # ============================================================
-# 🤖 Ollama 클라이언트 (Ollama Cloud)
+# 🤖 Ollama 클라이언트 (네이티브 API)
 # ============================================================
 
 @st.cache_resource
 def get_llm_client():
-    return OpenAI(
-        base_url="https://ollama.com/v1",
-        api_key=OLLAMA_API_KEY,
+    return Client(
+        host="https://ollama.com",
+        headers={
+            "Authorization": f"Bearer {OLLAMA_API_KEY}"
+        }
     )
 
 
@@ -126,11 +128,6 @@ def get_llm_client():
 
 @st.cache_resource
 def get_ocr_engine():
-    """
-    한국어 인식에 최적화된 RapidOCR 엔진을 반환합니다.
-    - 감지(Det): 다국어 모델 (LangDet.MULTI)
-    - 인식(Rec): 한국어 모델 (LangRec.KOREAN)
-    """
     if not OCR_SUPPORT:
         raise RuntimeError(OCR_ERROR)
 
@@ -314,7 +311,7 @@ if menu == "질문하기":
             with st.spinner("AI가 답변을 생성하고 있습니다..."):
                 try:
                     client = get_llm_client()
-                    response = client.chat.completions.create(
+                    response = client.chat(
                         model="gpt-oss:120b-cloud",
                         messages=[
                             {
@@ -327,17 +324,30 @@ if menu == "질문하기":
                             },
                             {"role": "user", "content": question}
                         ],
-                        temperature=0.7,
-                        max_tokens=2000,
+                        stream=False
                     )
 
-                    answer = response.choices[0].message.content
+                    answer = response["message"]["content"]
                     st.success("답변")
                     st.write(answer)
 
                 except Exception as e:
                     st.error("AI 호출 중 오류가 발생했습니다.")
                     st.code(repr(e))
+
+                    # 🔍 401 진단 도우미
+                    with st.expander("🔧 인증 오류 진단"):
+                        st.write("키 앞 6자리:", OLLAMA_API_KEY[:6] if OLLAMA_API_KEY else "없음")
+                        st.write("키 길이:", len(OLLAMA_API_KEY) if OLLAMA_API_KEY else 0)
+                        st.write("모델명: gpt-oss:120b-cloud")
+                        st.write("호스트: https://ollama.com")
+                        st.info(
+                            "401 오류가 계속되면:\n"
+                            "1. ollama.com/settings/keys 에서 키가 Active인지 확인\n"
+                            "2. 키를 재발급하고 Streamlit Secrets 업데이트\n"
+                            "3. ⋮ → Reboot app 클릭\n"
+                            "4. Secrets 키 이름이 정확히 OLLAMA_API_KEY 인지 확인"
+                        )
         else:
             st.warning("질문을 입력해주세요.")
 
@@ -365,13 +375,11 @@ elif menu == "자료관리":
         key="pdf_upload"
     )
 
-    # 업로드된 파일을 세션에 저장
     if pdf_files:
         for f in pdf_files:
             f.seek(0)
             st.session_state.saved_pdfs[f.name] = f.read()
 
-    # 세션에 저장된 PDF 관리
     if st.session_state.saved_pdfs:
         st.caption(f"📦 저장된 PDF: {len(st.session_state.saved_pdfs)}개")
         if st.button("🗑️ PDF 목록 비우기", key="clear_pdfs"):
@@ -584,7 +592,6 @@ elif menu == "자료관리":
                                         "인식된 글자가 없습니다."
                                     )
 
-                        # 저장된 OCR 결과 표시
                         if ocr_key in st.session_state.ocr_results:
                             st.text_area(
                                 "📝 OCR 인식 결과",

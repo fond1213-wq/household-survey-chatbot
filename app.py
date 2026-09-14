@@ -1,7 +1,9 @@
 import io
 import os
-import sys
+import json
+import hashlib
 import importlib.metadata
+from datetime import datetime
 
 import streamlit as st
 from pypdf import PdfReader
@@ -19,6 +21,30 @@ st.set_page_config(
 
 
 # ============================================================
+# 기본 폴더
+# ============================================================
+
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
+DATA_DIR = os.path.join(
+    BASE_DIR,
+    "data"
+)
+
+os.makedirs(
+    DATA_DIR,
+    exist_ok=True
+)
+
+INDEX_FILE = os.path.join(
+    DATA_DIR,
+    "documents.json"
+)
+
+
+# ============================================================
 # Pillow
 # ============================================================
 
@@ -29,6 +55,7 @@ try:
     PIL_ERROR = ""
 
 except Exception as e:
+
     PIL_SUPPORT = False
     PIL_ERROR = repr(e)
 
@@ -46,6 +73,7 @@ try:
     HEIC_ERROR = ""
 
 except Exception as e:
+
     HEIC_SUPPORT = False
     HEIC_ERROR = repr(e)
 
@@ -61,6 +89,7 @@ try:
     NUMPY_ERROR = ""
 
 except Exception as e:
+
     NUMPY_SUPPORT = False
     NUMPY_ERROR = repr(e)
 
@@ -76,15 +105,13 @@ try:
     REQUESTS_ERROR = ""
 
 except Exception as e:
+
     REQUESTS_SUPPORT = False
     REQUESTS_ERROR = repr(e)
 
 
 # ============================================================
 # RapidOCR
-#
-# 중요:
-# Enum 타입을 공식 방식으로 사용
 # ============================================================
 
 try:
@@ -108,7 +135,7 @@ except Exception as e:
 
 
 # ============================================================
-# 버전 확인
+# 버전
 # ============================================================
 
 try:
@@ -134,15 +161,6 @@ except Exception:
 
 
 # ============================================================
-# 프로젝트 폴더
-# ============================================================
-
-BASE_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
-
-
-# ============================================================
 # OCR 모델 폴더
 # ============================================================
 
@@ -151,7 +169,6 @@ MODEL_DIR = os.path.join(
     "models"
 )
 
-
 os.makedirs(
     MODEL_DIR,
     exist_ok=True
@@ -159,28 +176,312 @@ os.makedirs(
 
 
 # ============================================================
-# PP-OCRv5 공식 ONNX 모델
-#
-# RapidOCR 3.9.2 공식 모델 주소 사용
+# OCR 모델 파일
+# ============================================================
+
+DET_MODEL = os.path.join(
+    MODEL_DIR,
+    "ch_PP-OCRv5_det_mobile.onnx"
+)
+
+REC_MODEL = os.path.join(
+    MODEL_DIR,
+    "korean_PP-OCRv5_rec_mobile.onnx"
+)
+
+DICT_FILE = os.path.join(
+    MODEL_DIR,
+    "ppocrv5_korean_dict.txt"
+)
+
+
+# ============================================================
+# 자료 목록 불러오기
+# ============================================================
+
+def load_documents():
+
+    if not os.path.exists(
+        INDEX_FILE
+    ):
+
+        return []
+
+
+    try:
+
+        with open(
+            INDEX_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            data = json.load(f)
+
+
+        if isinstance(
+            data,
+            list
+        ):
+
+            return data
+
+
+    except Exception:
+
+        pass
+
+
+    return []
+
+
+# ============================================================
+# 자료 목록 저장
+# ============================================================
+
+def save_documents(
+    documents
+):
+
+    with open(
+        INDEX_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            documents,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
+
+
+# ============================================================
+# 자료 ID
+# ============================================================
+
+def make_file_id(
+    filename,
+    content
+):
+
+    h = hashlib.sha256()
+
+    h.update(
+        filename.encode(
+            "utf-8",
+            errors="ignore"
+        )
+    )
+
+    h.update(
+        content
+    )
+
+    return h.hexdigest()[:16]
+
+
+# ============================================================
+# 자료 등록
+# ============================================================
+
+def register_document(
+    filename,
+    doc_type,
+    text,
+    original_size=0,
+    page_count=None
+):
+
+    if not text:
+        return False, "저장할 내용이 없습니다."
+
+
+    text = text.strip()
+
+
+    if not text:
+        return False, "저장할 내용이 없습니다."
+
+
+    documents = load_documents()
+
+
+    text_bytes = text.encode(
+        "utf-8"
+    )
+
+
+    file_id = make_file_id(
+        filename,
+        text_bytes
+    )
+
+
+    # 중복 확인
+    for document in documents:
+
+        if document.get("id") == file_id:
+
+            return (
+                False,
+                "이미 등록된 자료입니다."
+            )
+
+
+    # 파일명에서 확장자 제거
+    base_name = os.path.splitext(
+        filename
+    )[0]
+
+
+    # 파일명에 사용할 수 없는 문자 일부 정리
+    safe_name = (
+        base_name
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace(":", "_")
+    )
+
+
+    text_filename = (
+        safe_name
+        + "_"
+        + file_id
+        + ".txt"
+    )
+
+
+    text_path = os.path.join(
+        DATA_DIR,
+        text_filename
+    )
+
+
+    # 실제 텍스트 저장
+    with open(
+        text_path,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        f.write(
+            text
+        )
+
+
+    document = {
+
+        "id": file_id,
+
+        "filename": filename,
+
+        "type": doc_type,
+
+        "text_file": text_filename,
+
+        "size": original_size,
+
+        "page_count": page_count,
+
+        "text_length": len(text),
+
+        "registered_at":
+            datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+    }
+
+
+    documents.append(
+        document
+    )
+
+
+    save_documents(
+        documents
+    )
+
+
+    return (
+        True,
+        "자료가 정상적으로 등록되었습니다."
+    )
+
+
+# ============================================================
+# PDF 텍스트 추출
+# ============================================================
+
+def extract_pdf_text(
+    file_bytes
+):
+
+    reader = PdfReader(
+        io.BytesIO(
+            file_bytes
+        )
+    )
+
+
+    full_text = ""
+
+
+    for page_number, page in enumerate(
+        reader.pages,
+        start=1
+    ):
+
+        try:
+
+            text = page.extract_text()
+
+        except Exception:
+
+            text = None
+
+
+        if text:
+
+            text = text.strip()
+
+
+            if text:
+
+                full_text += (
+                    "\n\n"
+                    "===== 페이지 "
+                    + str(page_number)
+                    + " =====\n\n"
+                    + text
+                )
+
+
+    return (
+        full_text.strip(),
+        len(reader.pages)
+    )
+
+
+# ============================================================
+# OCR 모델 다운로드
 # ============================================================
 
 MODEL_URLS = {
 
-    # 한국어 OCR용 Detection
     "det":
         "https://www.modelscope.cn/models/"
         "RapidAI/RapidOCR/resolve/v3.9.2/"
         "onnx/PP-OCRv5/det/"
         "ch_PP-OCRv5_det_mobile.onnx",
 
-    # 한국어 OCR Recognition
     "rec":
         "https://www.modelscope.cn/models/"
         "RapidAI/RapidOCR/resolve/v3.9.2/"
         "onnx/PP-OCRv5/rec/"
         "korean_PP-OCRv5_rec_mobile.onnx",
 
-    # 한국어 사전
     "dict":
         "https://www.modelscope.cn/models/"
         "RapidAI/RapidOCR/resolve/v3.9.2/"
@@ -191,56 +492,23 @@ MODEL_URLS = {
 
 
 # ============================================================
-# 실제 파일 위치
-# ============================================================
-
-MODEL_FILES = {
-
-    "det":
-        os.path.join(
-            MODEL_DIR,
-            "ch_PP-OCRv5_det_mobile.onnx"
-        ),
-
-    "rec":
-        os.path.join(
-            MODEL_DIR,
-            "korean_PP-OCRv5_rec_mobile.onnx"
-        ),
-
-    "dict":
-        os.path.join(
-            MODEL_DIR,
-            "ppocrv5_korean_dict.txt"
-        )
-}
-
-
-# ============================================================
 # 파일 다운로드
 # ============================================================
 
-def download_file(
+def download_model(
     url,
-    destination
+    path
 ):
 
-    # 이미 정상 파일이 있으면 재다운로드하지 않음
-    if os.path.exists(destination):
+    # 이미 존재하면 사용
+    if os.path.exists(path):
 
         try:
 
-            size = os.path.getsize(
-                destination
-            )
+            if os.path.getsize(path) > 0:
 
-            if size > 0:
+                return True, "이미 존재"
 
-                return (
-                    True,
-                    "이미 존재: "
-                    + os.path.basename(destination)
-                )
 
         except Exception:
 
@@ -251,7 +519,7 @@ def download_file(
 
         return (
             False,
-            "requests 패키지를 사용할 수 없습니다."
+            "requests가 설치되어 있지 않습니다."
         )
 
 
@@ -268,7 +536,7 @@ def download_file(
 
 
         with open(
-            destination,
+            path,
             "wb"
         ) as f:
 
@@ -278,31 +546,37 @@ def download_file(
 
                 if chunk:
 
-                    f.write(chunk)
+                    f.write(
+                        chunk
+                    )
 
 
-        size = os.path.getsize(
-            destination
-        )
-
-
-        if size <= 0:
-
-            try:
-                os.remove(destination)
-            except Exception:
-                pass
+        if not os.path.exists(
+            path
+        ):
 
             return (
                 False,
-                "다운로드 파일 크기가 0입니다."
+                "다운로드 파일이 생성되지 않았습니다."
+            )
+
+
+        size = os.path.getsize(
+            path
+        )
+
+
+        if size == 0:
+
+            return (
+                False,
+                "다운로드된 파일 크기가 0입니다."
             )
 
 
         return (
             True,
-            "다운로드 완료: "
-            + os.path.basename(destination)
+            "다운로드 완료"
         )
 
 
@@ -311,11 +585,11 @@ def download_file(
         try:
 
             if os.path.exists(
-                destination
+                path
             ):
 
                 os.remove(
-                    destination
+                    path
                 )
 
         except Exception:
@@ -338,24 +612,43 @@ def prepare_ocr_models():
 
     results = []
 
-    all_success = True
+
+    files = [
+
+        (
+            "det",
+            MODEL_URLS["det"],
+            DET_MODEL
+        ),
+
+        (
+            "rec",
+            MODEL_URLS["rec"],
+            REC_MODEL
+        ),
+
+        (
+            "dict",
+            MODEL_URLS["dict"],
+            DICT_FILE
+        )
+    ]
 
 
-    for key in [
-        "det",
-        "rec",
-        "dict"
-    ]:
+    all_ok = True
 
-        success, message = download_file(
-            MODEL_URLS[key],
-            MODEL_FILES[key]
+
+    for name, url, path in files:
+
+        success, message = download_model(
+            url,
+            path
         )
 
 
         results.append(
             (
-                key,
+                name,
                 success,
                 message
             )
@@ -364,24 +657,17 @@ def prepare_ocr_models():
 
         if not success:
 
-            all_success = False
+            all_ok = False
 
 
     return (
-        all_success,
+        all_ok,
         results
     )
 
 
 # ============================================================
 # OCR 엔진 생성
-#
-# 핵심 수정
-#
-# 1. Enum 사용
-# 2. 한국어 Recognition 모델 명시
-# 3. PP-OCRv5 명시
-# 4. Cls 모델 사용하지 않음
 # ============================================================
 
 @st.cache_resource
@@ -395,17 +681,24 @@ def create_ocr_engine():
         )
 
 
-    # 모델 존재 확인
-    for key in [
-        "det",
-        "rec",
-        "dict"
+    if not NUMPY_SUPPORT:
+
+        raise RuntimeError(
+            "NumPy import 실패:\n"
+            + NUMPY_ERROR
+        )
+
+
+    # 모델 파일 확인
+    for path in [
+        DET_MODEL,
+        REC_MODEL,
+        DICT_FILE
     ]:
 
-        path = MODEL_FILES[key]
-
-
-        if not os.path.exists(path):
+        if not os.path.exists(
+            path
+        ):
 
             raise FileNotFoundError(
                 "OCR 모델 파일이 없습니다:\n"
@@ -413,7 +706,9 @@ def create_ocr_engine():
             )
 
 
-        if os.path.getsize(path) <= 0:
+        if os.path.getsize(
+            path
+        ) <= 0:
 
             raise FileNotFoundError(
                 "OCR 모델 파일이 비어 있습니다:\n"
@@ -423,15 +718,7 @@ def create_ocr_engine():
 
     try:
 
-        # ----------------------------------------------------
-        # RapidOCR 공식 Enum 방식
-        # ----------------------------------------------------
-
         params = {
-
-            # ------------------------------
-            # Detection
-            # ------------------------------
 
             "Det.engine_type":
                 EngineType.ONNXRUNTIME,
@@ -446,12 +733,8 @@ def create_ocr_engine():
                 OCRVersion.PPOCRV5,
 
             "Det.model_path":
-                MODEL_FILES["det"],
+                DET_MODEL,
 
-
-            # ------------------------------
-            # Recognition
-            # ------------------------------
 
             "Rec.engine_type":
                 EngineType.ONNXRUNTIME,
@@ -466,11 +749,10 @@ def create_ocr_engine():
                 OCRVersion.PPOCRV5,
 
             "Rec.model_path":
-                MODEL_FILES["rec"],
+                REC_MODEL,
 
             "Rec.rec_keys_path":
-                MODEL_FILES["dict"]
-
+                DICT_FILE
         }
 
 
@@ -498,12 +780,11 @@ def run_ocr(
     pil_image
 ):
 
-    if not OCR_SUPPORT:
+    if not PIL_SUPPORT:
 
         return (
             None,
-            "RapidOCR을 불러오지 못했습니다.\n"
-            + OCR_IMPORT_ERROR
+            "Pillow가 설치되어 있지 않습니다."
         )
 
 
@@ -511,54 +792,57 @@ def run_ocr(
 
         return (
             None,
-            "NumPy를 불러오지 못했습니다.\n"
-            + NUMPY_ERROR
+            NUMPY_ERROR
         )
 
 
     try:
 
-        # --------------------------------------------
-        # RGB
-        # --------------------------------------------
-
-        rgb_image = pil_image.convert(
+        # RGB로 변환
+        image = pil_image.convert(
             "RGB"
         )
 
 
-        # --------------------------------------------
-        # NumPy
-        # --------------------------------------------
+        # 너무 큰 사진은 OCR용으로 축소
+        max_dimension = 2500
+
+
+        width, height = image.size
+
+
+        if max(
+            width,
+            height
+        ) > max_dimension:
+
+            ratio = (
+                max_dimension
+                / max(width, height)
+            )
+
+
+            new_size = (
+                int(width * ratio),
+                int(height * ratio)
+            )
+
+
+            image = image.resize(
+                new_size
+            )
+
 
         image_array = np.array(
-            rgb_image
+            image
         )
 
-
-        # --------------------------------------------
-        # OCR 엔진
-        # --------------------------------------------
 
         engine = create_ocr_engine()
 
 
-        # --------------------------------------------
-        # OCR 실행
-        #
-        # 중요:
-        # use_cls=False
-        #
-        # 이전 80 x 160 / 48 x 192 오류가
-        # 방향분류 단계에서 발생했기 때문에
-        # 일단 Cls를 사용하지 않습니다.
-        # --------------------------------------------
-
         result = engine(
-            image_array,
-            use_det=True,
-            use_cls=False,
-            use_rec=True
+            image_array
         )
 
 
@@ -589,10 +873,7 @@ def extract_ocr_text(
 
     try:
 
-        # ----------------------------------------------------
-        # RapidOCR 결과 객체
-        # ----------------------------------------------------
-
+        # RapidOCR 최신 결과
         if hasattr(
             result,
             "txts"
@@ -624,10 +905,7 @@ def extract_ocr_text(
             return texts
 
 
-        # ----------------------------------------------------
-        # tuple 결과
-        # ----------------------------------------------------
-
+        # tuple 형태 결과
         if isinstance(
             result,
             tuple
@@ -666,38 +944,307 @@ def extract_ocr_text(
                     return texts
 
 
-        # ----------------------------------------------------
-        # list 결과
-        # ----------------------------------------------------
-
-        if isinstance(
-            result,
-            list
-        ):
-
-            for item in result:
-
-                if isinstance(
-                    item,
-                    str
-                ):
-
-                    text = item.strip()
-
-
-                    if text:
-
-                        texts.append(
-                            text
-                        )
-
-
     except Exception:
 
         pass
 
 
     return texts
+
+
+# ============================================================
+# 검색용 텍스트 정리
+# ============================================================
+
+def normalize_text(
+    text
+):
+
+    return (
+        text
+        .replace("\n", " ")
+        .replace("\r", " ")
+        .replace("\t", " ")
+    )
+
+
+# ============================================================
+# 검색
+# ============================================================
+
+def search_documents(
+    question,
+    documents,
+    max_results=5
+):
+
+    question = question.strip()
+
+
+    if not question:
+
+        return []
+
+
+    # 질문을 공백 기준으로 나눔
+    raw_words = question.split()
+
+
+    # 너무 짧은 단어 제외
+    query_words = []
+
+
+    for word in raw_words:
+
+        word = word.strip(
+            ".,?!:;()[]{}\"'"
+        )
+
+
+        if len(word) >= 2:
+
+            query_words.append(
+                word
+            )
+
+
+    # 질문 자체도 검색어로 사용
+    if not query_words:
+
+        query_words = [
+            question
+        ]
+
+
+    results = []
+
+
+    for document in documents:
+
+        text_filename = document.get(
+            "text_file"
+        )
+
+
+        if not text_filename:
+            continue
+
+
+        text_path = os.path.join(
+            DATA_DIR,
+            text_filename
+        )
+
+
+        if not os.path.exists(
+            text_path
+        ):
+
+            continue
+
+
+        try:
+
+            with open(
+                text_path,
+                "r",
+                encoding="utf-8"
+            ) as f:
+
+                text = f.read()
+
+
+        except Exception:
+
+            continue
+
+
+        if not text.strip():
+            continue
+
+
+        # --------------------------------------------------------
+        # 문장/구간 분리
+        # --------------------------------------------------------
+
+        normalized = normalize_text(
+            text
+        )
+
+
+        # 한국어 문장 구분
+        pieces = []
+
+
+        current = ""
+
+
+        for char in normalized:
+
+            current += char
+
+
+            if char in [
+                ".",
+                "。",
+                "?",
+                "!",
+                ";"
+            ]:
+
+                if current.strip():
+
+                    pieces.append(
+                        current.strip()
+                    )
+
+                current = ""
+
+
+        if current.strip():
+
+            pieces.append(
+                current.strip()
+            )
+
+
+        # 문장이 너무 길면 일정 길이로 분리
+        final_pieces = []
+
+
+        for piece in pieces:
+
+            if len(piece) <= 500:
+
+                final_pieces.append(
+                    piece
+                )
+
+            else:
+
+                for i in range(
+                    0,
+                    len(piece),
+                    400
+                ):
+
+                    part = piece[
+                        i:i + 400
+                    ].strip()
+
+
+                    if part:
+
+                        final_pieces.append(
+                            part
+                        )
+
+
+        # --------------------------------------------------------
+        # 점수 계산
+        # --------------------------------------------------------
+
+        matched = []
+
+
+        for piece in final_pieces:
+
+            lower_piece = piece.lower()
+
+            score = 0
+
+
+            for word in query_words:
+
+                if word.lower() in lower_piece:
+
+                    score += 1
+
+
+                    # 정확히 많이 등장하면 추가 점수
+                    count = lower_piece.count(
+                        word.lower()
+                    )
+
+
+                    if count > 1:
+
+                        score += min(
+                            count - 1,
+                            2
+                        )
+
+
+            if score > 0:
+
+                matched.append(
+                    (
+                        score,
+                        piece
+                    )
+                )
+
+
+        if not matched:
+
+            continue
+
+
+        matched.sort(
+            reverse=True,
+            key=lambda x: x[0]
+        )
+
+
+        best_sentences = [
+            item[1]
+            for item in matched[:5]
+        ]
+
+
+        total_score = sum(
+            item[0]
+            for item in matched
+        )
+
+
+        results.append(
+            {
+
+                "score":
+                    total_score,
+
+                "filename":
+                    document.get(
+                        "filename",
+                        ""
+                    ),
+
+                "type":
+                    document.get(
+                        "type",
+                        ""
+                    ),
+
+                "sentences":
+                    best_sentences,
+
+                "document":
+                    document
+            }
+        )
+
+
+    # 점수가 높은 자료부터
+    results.sort(
+        reverse=True,
+        key=lambda x: x["score"]
+    )
+
+
+    return results[
+        :max_results
+    ]
 
 
 # ============================================================
@@ -741,114 +1288,57 @@ with st.sidebar:
     st.divider()
 
 
-    st.write(
-        "**OCR 시스템 상태**"
+    st.subheader(
+        "⚙️ 시스템 상태"
     )
 
 
     if OCR_SUPPORT:
 
         st.success(
-            "✅ RapidOCR 설치됨"
+            "✅ RapidOCR 사용 가능"
         )
 
     else:
 
         st.error(
-            "❌ RapidOCR import 실패"
+            "❌ RapidOCR 사용 불가"
         )
 
 
-        st.code(
-            OCR_IMPORT_ERROR
-        )
-
-
-    st.write(
+    st.caption(
         f"RapidOCR: {RAPIDOCR_VERSION}"
     )
 
 
-    st.write(
+    st.caption(
         f"ONNX Runtime: {ONNXRUNTIME_VERSION}"
     )
+
+
+    if HEIC_SUPPORT:
+
+        st.caption(
+            "HEIC/HEIF: ✅"
+        )
+
+    else:
+
+        st.caption(
+            "HEIC/HEIF: ❌"
+        )
 
 
     st.divider()
 
 
-    with st.expander(
-        "🔧 시스템 진단"
-    ):
-
-        st.write(
-            "Python"
-        )
-
-        st.code(
-            sys.version
-        )
+    documents = load_documents()
 
 
-        st.write(
-            "RapidOCR"
-        )
-
-        st.code(
-            RAPIDOCR_VERSION
-        )
-
-
-        st.write(
-            "ONNX Runtime"
-        )
-
-        st.code(
-            ONNXRUNTIME_VERSION
-        )
-
-
-        st.write(
-            "Pillow"
-        )
-
-        if PIL_SUPPORT:
-
-            st.success(
-                "정상"
-            )
-
-        else:
-
-            st.error(
-                PIL_ERROR
-            )
-
-
-        st.write(
-            "HEIC"
-        )
-
-        if HEIC_SUPPORT:
-
-            st.success(
-                "지원"
-            )
-
-        else:
-
-            st.warning(
-                "미지원"
-            )
-
-
-        st.write(
-            "OCR 모델 폴더"
-        )
-
-        st.code(
-            MODEL_DIR
-        )
+    st.metric(
+        "📚 등록된 자료",
+        len(documents)
+    )
 
 
 # ============================================================
@@ -862,43 +1352,173 @@ if menu == "질문하기":
     )
 
 
-    question = st.text_area(
-        "궁금한 내용을 입력하세요.",
-        placeholder=(
-            "예: 취업자는 어떤 기준으로 판단하나요?"
-        ),
-        height=120
-    )
+    documents = load_documents()
 
 
-    if st.button(
-        "🔍 질문하기",
-        use_container_width=True
-    ):
+    if not documents:
 
-        if question.strip():
+        st.info(
+            "아직 등록된 자료가 없습니다."
+        )
 
-            st.info(
-                "현재는 자료 등록 및 OCR을 "
-                "구축하는 단계입니다."
+        st.write(
+            "자료관리에서 PDF, TXT 또는 사진을 "
+            "먼저 등록해주세요."
+        )
+
+
+    else:
+
+        st.success(
+            f"현재 {len(documents)}개의 자료가 "
+            "검색 대상입니다."
+        )
+
+
+        question = st.text_area(
+            "궁금한 내용을 입력하세요.",
+            placeholder=(
+                "예: 취업자는 어떤 기준으로 판단하나요?"
+            ),
+            height=130,
+            key="question_input"
+        )
+
+
+        if st.button(
+            "🔍 자료에서 검색",
+            use_container_width=True
+        ):
+
+            if not question.strip():
+
+                st.warning(
+                    "질문을 입력해주세요."
+                )
+
+            else:
+
+                with st.spinner(
+                    "등록된 자료를 검색하고 있습니다..."
+                ):
+
+                    results = search_documents(
+                        question,
+                        documents,
+                        max_results=5
+                    )
+
+
+                st.session_state[
+                    "search_results"
+                ] = results
+
+
+                st.session_state[
+                    "last_question"
+                ] = question
+
+
+        # --------------------------------------------------------
+        # 검색 결과 표시
+        # --------------------------------------------------------
+
+        if (
+            "search_results"
+            in st.session_state
+        ):
+
+            results = st.session_state[
+                "search_results"
+            ]
+
+
+            st.divider()
+
+
+            st.subheader(
+                "🔎 검색 결과"
             )
 
 
-            st.write(
-                "입력하신 질문:"
-            )
+            if not results:
+
+                st.warning(
+                    "질문과 관련된 내용을 "
+                    "등록된 자료에서 찾지 못했습니다."
+                )
 
 
-            st.write(
-                question
-            )
+                st.info(
+                    "질문의 표현을 조금 바꿔서 "
+                    "다시 검색해보세요."
+                )
 
 
-        else:
+            else:
 
-            st.warning(
-                "질문을 입력해주세요."
-            )
+                st.success(
+                    f"{len(results)}개의 자료에서 "
+                    "관련 내용을 찾았습니다."
+                )
+
+
+                for number, result in enumerate(
+                    results,
+                    start=1
+                ):
+
+                    filename = result[
+                        "filename"
+                    ]
+
+
+                    doc_type = result[
+                        "type"
+                    ]
+
+
+                    score = result[
+                        "score"
+                    ]
+
+
+                    with st.expander(
+                        f"📚 {number}. "
+                        f"{filename} "
+                        f"({doc_type})",
+                        expanded=True
+                    ):
+
+                        st.caption(
+                            f"검색 관련도 점수: {score}"
+                        )
+
+
+                        st.markdown(
+                            "### 📖 관련 내용"
+                        )
+
+
+                        for sentence in result[
+                            "sentences"
+                        ]:
+
+                            st.markdown(
+                                "> "
+                                + sentence
+                            )
+
+
+                st.divider()
+
+
+                st.info(
+                    "✅ 자료 검색이 완료되었습니다. "
+                    "현재는 검색 결과를 보여주는 단계입니다. "
+                    "다음 단계에서 LLM을 연결하면 "
+                    "이 내용을 바탕으로 자연어 답변을 생성할 수 있습니다."
+                )
 
 
 # ============================================================
@@ -914,7 +1534,7 @@ elif menu == "자료관리":
 
     st.write(
         "가구부문 통계조사 관련 PDF, TXT, 사진 자료를 "
-        "등록하고 처리할 수 있습니다."
+        "등록할 수 있습니다."
     )
 
 
@@ -969,8 +1589,7 @@ elif menu == "자료관리":
 
 
     st.write(
-        "JPG, JPEG, PNG, WEBP, HEIC, HEIF, BMP 파일을 "
-        "선택할 수 있습니다."
+        "JPG, JPEG, PNG, WEBP, HEIC, HEIF, BMP를 지원합니다."
     )
 
 
@@ -1002,27 +1621,6 @@ elif menu == "자료관리":
     )
 
 
-    pdf_count = (
-        len(pdf_files)
-        if pdf_files
-        else 0
-    )
-
-
-    txt_count = (
-        len(txt_files)
-        if txt_files
-        else 0
-    )
-
-
-    image_count = (
-        len(image_files)
-        if image_files
-        else 0
-    )
-
-
     col1, col2, col3 = st.columns(3)
 
 
@@ -1030,7 +1628,9 @@ elif menu == "자료관리":
 
         st.metric(
             "📄 PDF",
-            pdf_count
+            len(pdf_files)
+            if pdf_files
+            else 0
         )
 
 
@@ -1038,7 +1638,9 @@ elif menu == "자료관리":
 
         st.metric(
             "📝 TXT",
-            txt_count
+            len(txt_files)
+            if txt_files
+            else 0
         )
 
 
@@ -1046,12 +1648,14 @@ elif menu == "자료관리":
 
         st.metric(
             "📷 사진",
-            image_count
+            len(image_files)
+            if image_files
+            else 0
         )
 
 
     # ========================================================
-    # PDF 내용
+    # PDF 처리
     # ========================================================
 
     if pdf_files:
@@ -1060,11 +1664,13 @@ elif menu == "자료관리":
 
 
         st.subheader(
-            "📄 PDF 내용 확인"
+            "📄 PDF 처리"
         )
 
 
-        for file in pdf_files:
+        for index, file in enumerate(
+            pdf_files
+        ):
 
             try:
 
@@ -1073,57 +1679,71 @@ elif menu == "자료관리":
                 pdf_bytes = file.read()
 
 
-                reader = PdfReader(
-                    io.BytesIO(
+                full_text, page_count = (
+                    extract_pdf_text(
                         pdf_bytes
                     )
                 )
 
 
-                full_text = ""
-
-
-                for page_number, page in enumerate(
-                    reader.pages,
-                    start=1
-                ):
-
-                    text = page.extract_text()
-
-
-                    if text:
-
-                        full_text += (
-                            "\n\n"
-                            f"===== 페이지 {page_number} ====="
-                            "\n\n"
-                        )
-
-
-                        full_text += text
-
-
                 with st.expander(
-                    f"📄 {file.name}"
+                    f"📄 {file.name}",
+                    expanded=True
                 ):
 
-                    if full_text.strip():
+                    st.write(
+                        f"페이지 수: {page_count}"
+                    )
+
+
+                    if full_text:
 
                         st.text_area(
                             "추출된 텍스트",
                             full_text,
-                            height=500,
+                            height=350,
                             key=(
-                                f"pdf_text_"
-                                f"{file.name}"
+                                "pdf_preview_"
+                                + str(index)
+                                + file.name
                             )
                         )
 
 
-                        st.success(
-                            f"{len(reader.pages)}페이지에서 "
-                            "텍스트를 추출했습니다."
-                        )
+                        if st.button(
+                            "💾 이 PDF 자료 등록",
+                            key=(
+                                "register_pdf_"
+                                + str(index)
+                                + file.name
+                            ),
+                            use_container_width=True
+                        ):
+
+                            success, message = (
+                                register_document(
+                                    file.name,
+                                    "PDF",
+                                    full_text,
+                                    file.size,
+                                    page_count
+                                )
+                            )
+
+
+                            if success:
+
+                                st.success(
+                                    message
+                                )
+
+                                st.rerun()
+
+                            else:
+
+                                st.warning(
+                                    message
+                                )
 
 
                     else:
@@ -1134,7 +1754,8 @@ elif menu == "자료관리":
 
 
                         st.info(
-                            "스캔 PDF일 가능성이 있습니다."
+                            "스캔 PDF라면 다음 단계에서 "
+                            "PDF OCR 기능을 추가할 수 있습니다."
                         )
 
 
@@ -1151,7 +1772,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # TXT 내용
+    # TXT 처리
     # ========================================================
 
     if txt_files:
@@ -1160,11 +1781,13 @@ elif menu == "자료관리":
 
 
         st.subheader(
-            "📝 TXT 내용 확인"
+            "📝 TXT 처리"
         )
 
 
-        for file in txt_files:
+        for index, file in enumerate(
+            txt_files
+        ):
 
             try:
 
@@ -1179,7 +1802,6 @@ elif menu == "자료관리":
                         "utf-8"
                     )
 
-
                 except UnicodeDecodeError:
 
                     content = content_bytes.decode(
@@ -1188,31 +1810,62 @@ elif menu == "자료관리":
 
 
                 with st.expander(
-                    f"📝 {file.name}"
+                    f"📝 {file.name}",
+                    expanded=True
                 ):
 
                     st.text_area(
                         "TXT 내용",
                         content,
-                        height=400,
+                        height=300,
                         key=(
-                            f"txt_text_"
-                            f"{file.name}"
+                            "txt_preview_"
+                            + str(index)
+                            + file.name
                         )
                     )
 
 
-                    st.success(
-                        "TXT 파일을 정상적으로 읽었습니다."
-                    )
+                    if st.button(
+                        "💾 이 TXT 자료 등록",
+                        key=(
+                            "register_txt_"
+                            + str(index)
+                            + file.name
+                        ),
+                        use_container_width=True
+                    ):
+
+                        success, message = (
+                            register_document(
+                                file.name,
+                                "TXT",
+                                content,
+                                file.size
+                            )
+                        )
+
+
+                        if success:
+
+                            st.success(
+                                message
+                            )
+
+                            st.rerun()
+
+                        else:
+
+                            st.warning(
+                                message
+                            )
 
 
             except Exception as e:
 
                 st.error(
-                    f"{file.name} 파일을 읽을 수 없습니다."
+                    f"{file.name} 처리 중 오류가 발생했습니다."
                 )
-
 
                 st.code(
                     repr(e)
@@ -1220,7 +1873,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # 사진
+    # 사진 처리 + OCR
     # ========================================================
 
     if image_files:
@@ -1229,7 +1882,7 @@ elif menu == "자료관리":
 
 
         st.subheader(
-            "📷 업로드된 사진"
+            "📷 사진 OCR 및 자료 등록"
         )
 
 
@@ -1241,50 +1894,6 @@ elif menu == "자료관리":
                 f"📷 {file.name}",
                 expanded=True
             ):
-
-                # --------------------------------------------
-                # 파일 정보
-                # --------------------------------------------
-
-                col_a, col_b, col_c = st.columns(3)
-
-
-                with col_a:
-
-                    st.write(
-                        "**파일명**"
-                    )
-
-                    st.code(
-                        file.name
-                    )
-
-
-                with col_b:
-
-                    st.write(
-                        "**MIME 타입**"
-                    )
-
-                    st.code(
-                        str(file.type)
-                    )
-
-
-                with col_c:
-
-                    st.write(
-                        "**크기**"
-                    )
-
-                    st.code(
-                        f"{file.size / 1024 / 1024:.2f} MB"
-                    )
-
-
-                # --------------------------------------------
-                # 이미지 처리
-                # --------------------------------------------
 
                 try:
 
@@ -1312,16 +1921,6 @@ elif menu == "자료관리":
                     image.load()
 
 
-                    st.write(
-                        "**실제 이미지 포맷**"
-                    )
-
-
-                    st.code(
-                        str(image.format)
-                    )
-
-
                     st.image(
                         image,
                         caption=file.name,
@@ -1329,103 +1928,90 @@ elif menu == "자료관리":
                     )
 
 
-                    st.success(
-                        "사진이 정상적으로 업로드되었습니다."
-                    )
+                    col_a, col_b = st.columns(2)
 
 
-                    # ========================================
-                    # OCR
-                    # ========================================
+                    with col_a:
 
-                    st.markdown(
-                        "### 🔎 한국어 OCR"
-                    )
-
-
-                    if not OCR_SUPPORT:
-
-                        st.error(
-                            "RapidOCR을 사용할 수 없습니다."
+                        st.write(
+                            "**실제 이미지 크기**"
                         )
-
 
                         st.code(
-                            OCR_IMPORT_ERROR
+                            f"{image.width} × "
+                            f"{image.height}"
                         )
 
 
-                    else:
+                    with col_b:
 
-                        if st.button(
-                            "🔎 이 사진 OCR 실행",
-                            key=(
-                                f"ocr_button_"
-                                f"{index}_"
-                                f"{file.name}"
-                            ),
-                            use_container_width=True
+                        st.write(
+                            "**파일 크기**"
+                        )
+
+                        st.code(
+                            f"{file.size / 1024 / 1024:.2f} MB"
+                        )
+
+
+                    # --------------------------------------------
+                    # OCR 실행
+                    # --------------------------------------------
+
+                    if st.button(
+                        "🔎 이 사진 OCR 실행",
+                        key=(
+                            "ocr_button_"
+                            + str(index)
+                            + file.name
+                        ),
+                        use_container_width=True
+                    ):
+
+                        with st.spinner(
+                            "OCR 모델을 준비하고 있습니다..."
                         ):
 
-                            # --------------------------------
-                            # 모델 다운로드
-                            # --------------------------------
+                            (
+                                models_ok,
+                                model_results
+                            ) = prepare_ocr_models()
+
+
+                        if not models_ok:
+
+                            st.error(
+                                "OCR 모델 준비에 실패했습니다."
+                            )
+
+
+                            for (
+                                model_name,
+                                success,
+                                message
+                            ) in model_results:
+
+                                if success:
+
+                                    st.success(
+                                        model_name
+                                        + ": "
+                                        + message
+                                    )
+
+                                else:
+
+                                    st.error(
+                                        model_name
+                                        + ": "
+                                        + message
+                                    )
+
+
+                        else:
 
                             with st.spinner(
-                                "OCR 모델을 준비하고 있습니다..."
-                            ):
-
-                                (
-                                    models_ok,
-                                    model_results
-                                ) = prepare_ocr_models()
-
-
-                            # --------------------------------
-                            # 모델 상태
-                            # --------------------------------
-
-                            with st.expander(
-                                "📦 OCR 모델 상태",
-                                expanded=True
-                            ):
-
-                                for (
-                                    model_name,
-                                    success,
-                                    message
-                                ) in model_results:
-
-                                    if success:
-
-                                        st.success(
-                                            f"{model_name}: "
-                                            f"{message}"
-                                        )
-
-                                    else:
-
-                                        st.error(
-                                            f"{model_name}: "
-                                            f"{message}"
-                                        )
-
-
-                            if not models_ok:
-
-                                st.error(
-                                    "OCR 모델 준비에 실패했습니다."
-                                )
-
-                                continue
-
-
-                            # --------------------------------
-                            # OCR 실행
-                            # --------------------------------
-
-                            with st.spinner(
-                                "사진의 한글을 인식하고 있습니다..."
+                                "사진에서 한글을 읽고 있습니다..."
                             ):
 
                                 (
@@ -1435,10 +2021,6 @@ elif menu == "자료관리":
                                     image
                                 )
 
-
-                            # --------------------------------
-                            # 오류
-                            # --------------------------------
 
                             if error:
 
@@ -1452,48 +2034,117 @@ elif menu == "자료관리":
                                 )
 
 
-                            # --------------------------------
-                            # 성공
-                            # --------------------------------
-
                             else:
 
-                                texts = extract_ocr_text(
-                                    result
+                                texts = (
+                                    extract_ocr_text(
+                                        result
+                                    )
                                 )
 
 
                                 if texts:
 
-                                    ocr_text = "\n".join(
-                                        texts
+                                    ocr_text = (
+                                        "\n".join(
+                                            texts
+                                        )
                                     )
+
+
+                                    ocr_key = (
+                                        "ocr_text_"
+                                        + str(index)
+                                        + file.name
+                                    )
+
+
+                                    st.session_state[
+                                        ocr_key
+                                    ] = ocr_text
 
 
                                     st.success(
-                                        f"{len(texts)}개의 "
-                                        "텍스트 영역을 인식했습니다."
-                                    )
-
-
-                                    st.text_area(
-                                        "📝 OCR 인식 결과",
-                                        ocr_text,
-                                        height=400,
-                                        key=(
-                                            f"ocr_result_"
-                                            f"{index}_"
-                                            f"{file.name}"
-                                        )
+                                        f"{len(texts)}개 영역의 "
+                                        "텍스트를 인식했습니다."
                                     )
 
 
                                 else:
 
                                     st.warning(
-                                        "OCR은 실행되었지만 "
                                         "인식된 텍스트가 없습니다."
                                     )
+
+
+                    # --------------------------------------------
+                    # OCR 결과 표시
+                    # --------------------------------------------
+
+                    ocr_key = (
+                        "ocr_text_"
+                        + str(index)
+                        + file.name
+                    )
+
+
+                    if ocr_key in st.session_state:
+
+                        ocr_text = (
+                            st.session_state[
+                                ocr_key
+                            ]
+                        )
+
+
+                        st.text_area(
+                            "📝 OCR 결과",
+                            ocr_text,
+                            height=350,
+                            key=(
+                                "ocr_result_view_"
+                                + str(index)
+                                + file.name
+                            )
+                        )
+
+
+                        st.divider()
+
+
+                        if st.button(
+                            "💾 OCR 결과를 자료로 등록",
+                            key=(
+                                "register_ocr_"
+                                + str(index)
+                                + file.name
+                            ),
+                            use_container_width=True
+                        ):
+
+                            success, message = (
+                                register_document(
+                                    file.name,
+                                    "사진 OCR",
+                                    ocr_text,
+                                    file.size
+                                )
+                            )
+
+
+                            if success:
+
+                                st.success(
+                                    message
+                                )
+
+                                st.rerun()
+
+                            else:
+
+                                st.warning(
+                                    message
+                                )
 
 
                 except Exception as e:
@@ -1505,4 +2156,170 @@ elif menu == "자료관리":
 
                     st.code(
                         repr(e)
+                    )
+
+
+    # ========================================================
+    # 등록된 자료
+    # ========================================================
+
+    st.divider()
+
+
+    st.subheader(
+        "📚 등록된 자료"
     )
+
+
+    documents = load_documents()
+
+
+    if not documents:
+
+        st.info(
+            "등록된 자료가 없습니다."
+        )
+
+
+    else:
+
+        st.success(
+            f"현재 총 {len(documents)}개의 자료가 등록되어 있습니다."
+        )
+
+
+        for index, document in enumerate(
+            reversed(documents)
+        ):
+
+            filename = document.get(
+                "filename",
+                ""
+            )
+
+
+            doc_type = document.get(
+                "type",
+                ""
+            )
+
+
+            with st.expander(
+                f"📚 {filename}  |  {doc_type}"
+            ):
+
+                col1, col2 = st.columns(2)
+
+
+                with col1:
+
+                    st.write(
+                        "**자료명**"
+                    )
+
+                    st.write(
+                        filename
+                    )
+
+
+                    st.write(
+                        "**자료 유형**"
+                    )
+
+                    st.write(
+                        doc_type
+                    )
+
+
+                    st.write(
+                        "**등록일**"
+                    )
+
+                    st.write(
+                        document.get(
+                            "registered_at",
+                            ""
+                        )
+                    )
+
+
+                with col2:
+
+                    st.write(
+                        "**텍스트 길이**"
+                    )
+
+                    st.write(
+                        f"{document.get('text_length', 0):,}자"
+                    )
+
+
+                    if document.get(
+                        "page_count"
+                    ):
+
+                        st.write(
+                            "**페이지 수**"
+                        )
+
+                        st.write(
+                            document.get(
+                                "page_count"
+                            )
+                        )
+
+
+                # 저장된 텍스트 확인
+                text_filename = document.get(
+                    "text_file"
+                )
+
+
+                if text_filename:
+
+                    text_path = os.path.join(
+                        DATA_DIR,
+                        text_filename
+                    )
+
+
+                    if os.path.exists(
+                        text_path
+                    ):
+
+                        try:
+
+                            with open(
+                                text_path,
+                                "r",
+                                encoding="utf-8"
+                            ) as f:
+
+                                saved_text = f.read()
+
+
+                            st.text_area(
+                                "저장된 내용",
+                                saved_text,
+                                height=250,
+                                key=(
+                                    "saved_"
+                                    + str(index)
+                                    + "_"
+                                    + document.get(
+                                        "id",
+                                        ""
+                                    )
+                                )
+                            )
+
+
+                        except Exception as e:
+
+                            st.warning(
+                                "저장된 자료를 읽을 수 없습니다."
+                            )
+
+                            st.code(
+                                repr(e)
+        )

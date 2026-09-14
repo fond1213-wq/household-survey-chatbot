@@ -1,6 +1,7 @@
 import io
 import os
 import sys
+import uuid
 import importlib.metadata
 
 import streamlit as st
@@ -87,7 +88,6 @@ st.set_page_config(
 # ============================================================
 
 def _load_secret(key):
-    """Secrets 우선, 환경변수 폴백으로 값을 불러옵니다."""
     value = None
     try:
         value = st.secrets[key]
@@ -134,7 +134,7 @@ def get_supabase():
 
 
 # ============================================================
-# ☁️ Supabase Storage 유틸
+# ☁️ Supabase Storage 유틸 (한글 파일명 안전 처리)
 # ============================================================
 
 CATEGORY_PDF = "pdfs"
@@ -142,50 +142,86 @@ CATEGORY_TXT = "txts"
 CATEGORY_IMAGE = "images"
 
 
+def _make_safe_key(file_name: str) -> str:
+    """원본 파일명을 ASCII 전용 UUID 키로 변환합니다."""
+    ext = ""
+    if "." in file_name:
+        ext = "." + file_name.rsplit(".", 1)[-1].lower()
+    return f"{uuid.uuid4().hex}{ext}"
+
+
 def upload_to_storage(file_bytes: bytes, file_name: str, category: str):
-    """파일을 Supabase Storage에 업로드(덮어쓰기)합니다."""
+    """
+    파일을 Supabase Storage에 업로드합니다.
+    한글 파일명은 InvalidKey 오류를 일으키므로 UUID 키로 변환하고,
+    원본 파일명은 메타데이터에 저장합니다.
+    반환: (safe_key, original_name)
+    """
     supabase = get_supabase()
-    path = f"{category}/{file_name}"
+    safe_key = _make_safe_key(file_name)
+    path = f"{category}/{safe_key}"
+
     supabase.storage.from_(SUPABASE_BUCKET).upload(
         path=path,
         file=file_bytes,
         file_options={
             "upsert": "true",
             "content-type": "application/octet-stream",
+            "metadata": {"original_name": file_name},
         },
     )
-    return path
+    return safe_key, file_name
 
 
 def list_storage(category: str):
-    """특정 카테고리의 파일 목록을 반환합니다."""
+    """
+    특정 카테고리의 파일 목록을 반환합니다.
+    반환 형식: [{"key": "uuid.pdf", "original_name": "원본.pdf"}, ...]
+    """
     supabase = get_supabase()
     try:
         items = supabase.storage.from_(SUPABASE_BUCKET).list(category)
     except Exception:
         return []
+
     result = []
     for item in items or []:
-        name = item.get("name") if isinstance(item, dict) else getattr(item, "name", None)
-        if name:
-            result.append(name)
+        if isinstance(item, dict):
+            key = item.get("name")
+            metadata = item.get("metadata") or {}
+        else:
+            key = getattr(item, "name", None)
+            metadata = getattr(item, "metadata", None) or {}
+
+        if not key:
+            continue
+
+        if isinstance(metadata, dict):
+            original_name = metadata.get("original_name", key)
+        else:
+            original_name = key
+
+        result.append({
+            "key": key,
+            "original_name": original_name,
+        })
+
     return result
 
 
-def download_from_storage(category: str, file_name: str) -> bytes:
+def download_from_storage(category: str, safe_key: str) -> bytes:
     """Storage에서 파일을 다운로드하여 bytes로 반환합니다."""
     supabase = get_supabase()
-    data = supabase.storage.from_(SUPABASE_BUCKET).download(
-        f"{category}/{file_name}"
+    return supabase.storage.from_(SUPABASE_BUCKET).download(
+        f"{category}/{safe_key}"
     )
-    return data
 
 
-def delete_from_storage(category: str, file_name: str):
+def delete_from_storage(category: str, safe_key: str):
     """Storage에서 파일을 삭제합니다."""
     supabase = get_supabase()
     supabase.storage.from_(SUPABASE_BUCKET).remove(
-        [f"{category}/{file_name}"]
+        [f"{category}/{safe_key}"]
     )
 
 
@@ -196,13 +232,18 @@ def load_all_files_from_storage():
         (CATEGORY_TXT, "saved_txts"),
         (CATEGORY_IMAGE, "saved_images"),
     ]:
-        file_names = list_storage(category)
-        for name in file_names:
+        for info in list_storage(category):
             try:
-                data = download_from_storage(category, name)
-                st.session_state[session_key][name] = data
+                data = download_from_storage(category, info["key"])
             except Exception:
                 continue
+
+            # 원본 파일명을 세션 키로 저장
+            st.session_state[session_key][info["original_name"]] = data
+            # 다운로드/삭제 시 사용할 안전 키 매핑
+            st.session_state.storage_keys[
+                f"{category}/{info['original_name']}"
+            ] = info["key"]
 
 
 # ============================================================
@@ -223,6 +264,9 @@ if "ocr_results" not in st.session_state:
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+
+if "storage_keys" not in st.session_state:
+    st.session_state.storage_keys = {}
 
 if "storage_loaded" not in st.session_state:
     with st.spinner("☁️ 저장된 자료를 불러오는 중..."):
@@ -278,9 +322,19 @@ def test_gemini_model() -> dict:
             model=GEMINI_MODEL,
             contents="ping",
         )
-        return {"ok": True, "model": GEMINI_MODEL, "message": response.text[:100], "error": None}
+        return {
+            "ok": True,
+            "model": GEMINI_MODEL,
+            "message": response.text[:100],
+            "error": None,
+        }
     except Exception as e:
-        return {"ok": False, "model": GEMINI_MODEL, "message": None, "error": repr(e)}
+        return {
+            "ok": False,
+            "model": GEMINI_MODEL,
+            "message": None,
+            "error": repr(e),
+        }
 
 
 def test_supabase() -> dict:
@@ -421,13 +475,22 @@ with st.sidebar:
     st.divider()
 
     st.write("**HEIC 지원**")
-    st.success("✅ 지원") if HEIC_SUPPORT else st.warning("❌ 지원 안 됨")
+    if HEIC_SUPPORT:
+        st.success("✅ 지원")
+    else:
+        st.warning("❌ 지원 안 됨")
 
     st.write("**OCR 지원**")
-    st.success("✅ RapidOCR v3") if OCR_SUPPORT else st.error("❌ 지원 안 됨")
+    if OCR_SUPPORT:
+        st.success("✅ RapidOCR v3")
+    else:
+        st.error("❌ 지원 안 됨")
 
     st.write("**영구 저장 (Supabase)**")
-    st.success("✅ 연결됨") if SUPABASE_SUPPORT else st.error("❌ 미지원")
+    if SUPABASE_SUPPORT:
+        st.success("✅ 연결됨")
+    else:
+        st.error("❌ 미지원")
 
     st.write("**AI 모델**")
     st.code(GEMINI_MODEL)
@@ -477,6 +540,7 @@ with st.sidebar:
         st.session_state.saved_txts = {}
         st.session_state.saved_images = {}
         st.session_state.ocr_results = {}
+        st.session_state.storage_keys = {}
         st.session_state.storage_loaded = False
         st.rerun()
 
@@ -561,9 +625,14 @@ elif menu == "자료관리":
         for f in pdf_files:
             f.seek(0)
             data = f.read()
-            st.session_state.saved_pdfs[f.name] = data
             try:
-                upload_to_storage(data, f.name, CATEGORY_PDF)
+                safe_key, original = upload_to_storage(
+                    data, f.name, CATEGORY_PDF
+                )
+                st.session_state.saved_pdfs[original] = data
+                st.session_state.storage_keys[
+                    f"{CATEGORY_PDF}/{original}"
+                ] = safe_key
             except Exception as e:
                 st.error(f"{f.name} 업로드 실패: {e}")
 
@@ -572,7 +641,11 @@ elif menu == "자료관리":
         if st.button("🗑️ PDF 전체 삭제", key="clear_pdfs"):
             for name in list(st.session_state.saved_pdfs.keys()):
                 try:
-                    delete_from_storage(CATEGORY_PDF, name)
+                    safe_key = st.session_state.storage_keys.get(
+                        f"{CATEGORY_PDF}/{name}"
+                    )
+                    if safe_key:
+                        delete_from_storage(CATEGORY_PDF, safe_key)
                 except Exception:
                     pass
             st.session_state.saved_pdfs = {}
@@ -593,9 +666,14 @@ elif menu == "자료관리":
         for f in txt_files:
             f.seek(0)
             data = f.read()
-            st.session_state.saved_txts[f.name] = data
             try:
-                upload_to_storage(data, f.name, CATEGORY_TXT)
+                safe_key, original = upload_to_storage(
+                    data, f.name, CATEGORY_TXT
+                )
+                st.session_state.saved_txts[original] = data
+                st.session_state.storage_keys[
+                    f"{CATEGORY_TXT}/{original}"
+                ] = safe_key
             except Exception as e:
                 st.error(f"{f.name} 업로드 실패: {e}")
 
@@ -604,7 +682,11 @@ elif menu == "자료관리":
         if st.button("🗑️ TXT 전체 삭제", key="clear_txts"):
             for name in list(st.session_state.saved_txts.keys()):
                 try:
-                    delete_from_storage(CATEGORY_TXT, name)
+                    safe_key = st.session_state.storage_keys.get(
+                        f"{CATEGORY_TXT}/{name}"
+                    )
+                    if safe_key:
+                        delete_from_storage(CATEGORY_TXT, safe_key)
                 except Exception:
                     pass
             st.session_state.saved_txts = {}
@@ -614,6 +696,10 @@ elif menu == "자료관리":
     # 이미지 업로더
     # --------------------------------------------------------
     st.markdown("### 📷 사진 자료")
+    st.write(
+        "JPG, JPEG, PNG, WEBP, HEIC, HEIF 등 이미지 파일을 "
+        "선택할 수 있습니다."
+    )
     image_files = st.file_uploader(
         "사진 파일을 선택하세요.",
         type=["jpg", "jpeg", "png", "webp", "heic", "heif", "bmp"],
@@ -625,9 +711,14 @@ elif menu == "자료관리":
         for f in image_files:
             f.seek(0)
             data = f.read()
-            st.session_state.saved_images[f.name] = data
             try:
-                upload_to_storage(data, f.name, CATEGORY_IMAGE)
+                safe_key, original = upload_to_storage(
+                    data, f.name, CATEGORY_IMAGE
+                )
+                st.session_state.saved_images[original] = data
+                st.session_state.storage_keys[
+                    f"{CATEGORY_IMAGE}/{original}"
+                ] = safe_key
             except Exception as e:
                 st.error(f"{f.name} 업로드 실패: {e}")
 
@@ -636,7 +727,11 @@ elif menu == "자료관리":
         if st.button("🗑️ 사진 전체 삭제", key="clear_images"):
             for name in list(st.session_state.saved_images.keys()):
                 try:
-                    delete_from_storage(CATEGORY_IMAGE, name)
+                    safe_key = st.session_state.storage_keys.get(
+                        f"{CATEGORY_IMAGE}/{name}"
+                    )
+                    if safe_key:
+                        delete_from_storage(CATEGORY_IMAGE, safe_key)
                 except Exception:
                     pass
             st.session_state.saved_images = {}

@@ -1,52 +1,57 @@
 import io
+import sys
+import importlib.metadata
+
 import streamlit as st
 from pypdf import PdfReader
 
 
-# ------------------------------------------------------------
-# 이미지 처리
-# ------------------------------------------------------------
-
-try:
-    from PIL import Image
-    PIL_SUPPORT = True
-except Exception:
-    PIL_SUPPORT = False
-
-
-# ------------------------------------------------------------
+# ============================================================
 # HEIC / HEIF 지원
-# ------------------------------------------------------------
+# ============================================================
 
 try:
     from pillow_heif import register_heif_opener
-
     register_heif_opener()
-
     HEIC_SUPPORT = True
-
-except Exception:
-
+    HEIC_ERROR = ""
+except Exception as e:
     HEIC_SUPPORT = False
+    HEIC_ERROR = repr(e)
 
 
-# ------------------------------------------------------------
-# RapidOCR
-# ------------------------------------------------------------
+# ============================================================
+# RapidOCR 지원 확인
+# ============================================================
+
+OCR_SUPPORT = False
+OCR_ERROR = ""
+RAPIDOCR_VERSION = "확인 불가"
+ONNXRUNTIME_VERSION = "확인 불가"
 
 try:
+    RAPIDOCR_VERSION = importlib.metadata.version("rapidocr")
+except Exception:
+    pass
 
+try:
+    ONNXRUNTIME_VERSION = importlib.metadata.version("onnxruntime")
+except Exception:
+    pass
+
+
+try:
     from rapidocr import RapidOCR
 
     OCR_SUPPORT = True
 
-except Exception:
-
+except Exception as e:
     OCR_SUPPORT = False
+    OCR_ERROR = repr(e)
 
 
 # ============================================================
-# 기본 설정
+# Streamlit 기본 설정
 # ============================================================
 
 st.set_page_config(
@@ -54,6 +59,54 @@ st.set_page_config(
     page_icon="📚",
     layout="wide"
 )
+
+
+# ============================================================
+# OCR 엔진
+# ============================================================
+
+@st.cache_resource
+def get_ocr_engine():
+
+    if not OCR_SUPPORT:
+        raise RuntimeError(
+            "RapidOCR import 실패:\n"
+            + OCR_ERROR
+        )
+
+    try:
+        engine = RapidOCR()
+        return engine
+
+    except Exception as e:
+        raise RuntimeError(
+            "RapidOCR 엔진 초기화 실패:\n"
+            + repr(e)
+        )
+
+
+# ============================================================
+# OCR 실행
+# ============================================================
+
+def run_ocr(pil_image):
+
+    try:
+        import numpy as np
+
+        image_array = np.array(pil_image)
+
+        engine = get_ocr_engine()
+
+        result = engine(image_array)
+
+        return result
+
+    except Exception as e:
+
+        return {
+            "error": repr(e)
+        }
 
 
 # ============================================================
@@ -68,99 +121,6 @@ st.caption(
 )
 
 st.divider()
-
-
-# ============================================================
-# OCR 엔진
-# ============================================================
-
-@st.cache_resource
-def get_ocr_engine():
-
-    if not OCR_SUPPORT:
-
-        return None
-
-    try:
-
-        engine = RapidOCR()
-
-        return engine
-
-    except Exception:
-
-        return None
-
-
-# ============================================================
-# OCR 함수
-# ============================================================
-
-def run_ocr(image_bytes):
-
-    if not OCR_SUPPORT:
-
-        return None, "RapidOCR이 설치되지 않았습니다."
-
-    try:
-
-        # 이미지 바이트 → PIL 이미지
-        image = Image.open(
-            io.BytesIO(image_bytes)
-        )
-
-        # RGB 변환
-        if image.mode not in ("RGB", "L"):
-
-            image = image.convert("RGB")
-
-        # PIL → numpy
-        import numpy as np
-
-        image_array = np.array(image)
-
-        # OCR 엔진
-        engine = get_ocr_engine()
-
-        if engine is None:
-
-            return None, "OCR 엔진을 불러오지 못했습니다."
-
-        # OCR 실행
-        result = engine(
-            image_array
-        )
-
-        # 인식 결과 확인
-        if result is None:
-
-            return "", None
-
-        # RapidOCR 최신 버전
-        if hasattr(result, "txts"):
-
-            texts = result.txts
-
-        else:
-
-            return str(result), None
-
-        if not texts:
-
-            return "", None
-
-        # 줄 단위로 합치기
-        text = "\n".join(
-            str(t)
-            for t in texts
-            if t
-        )
-
-        return text, None
-
-    except Exception as e:
-
-        return None, str(e)
 
 
 # ============================================================
@@ -181,15 +141,64 @@ with st.sidebar:
 
     st.divider()
 
-    st.caption(
-        f"HEIC 지원: "
-        f"{'✅' if HEIC_SUPPORT else '❌'}"
-    )
+    # HEIC 상태
+    st.write("**HEIC 지원**")
 
-    st.caption(
-        f"OCR 지원: "
-        f"{'✅ RapidOCR' if OCR_SUPPORT else '❌'}"
-    )
+    if HEIC_SUPPORT:
+        st.success("✅ 지원")
+    else:
+        st.warning("❌ 지원 안 됨")
+
+    # OCR 상태
+    st.write("**OCR 지원**")
+
+    if OCR_SUPPORT:
+        st.success("✅ RapidOCR 지원")
+    else:
+        st.error("❌ RapidOCR 지원 안 됨")
+
+    st.divider()
+
+    # ========================================================
+    # OCR 진단 정보
+    # ========================================================
+
+    with st.expander("🔧 시스템 진단"):
+
+        st.write("Python 버전")
+        st.code(sys.version)
+
+        st.write("RapidOCR 버전")
+        st.code(RAPIDOCR_VERSION)
+
+        st.write("ONNX Runtime 버전")
+        st.code(ONNXRUNTIME_VERSION)
+
+        st.write("RapidOCR import 상태")
+
+        if OCR_SUPPORT:
+
+            st.success(
+                "RapidOCR import 성공"
+            )
+
+        else:
+
+            st.error(
+                "RapidOCR import 실패"
+            )
+
+            st.code(
+                OCR_ERROR
+            )
+
+        if not HEIC_SUPPORT:
+
+            st.write("HEIC 오류")
+
+            st.code(
+                HEIC_ERROR
+            )
 
 
 # ============================================================
@@ -239,7 +248,7 @@ elif menu == "자료관리":
 
     st.write(
         "가구부문 통계조사 관련 PDF, TXT, 사진 자료를 "
-        "등록하고 처리할 수 있습니다."
+        "등록할 수 있습니다."
     )
 
     st.divider()
@@ -255,7 +264,7 @@ elif menu == "자료관리":
         "PDF 파일을 선택하세요.",
         type=["pdf"],
         accept_multiple_files=True,
-        key="pdf_upload"
+        key="pdf_upload",
     )
 
 
@@ -269,7 +278,7 @@ elif menu == "자료관리":
         "TXT 파일을 선택하세요.",
         type=["txt"],
         accept_multiple_files=True,
-        key="txt_upload"
+        key="txt_upload",
     )
 
 
@@ -280,8 +289,8 @@ elif menu == "자료관리":
     st.markdown("### 📷 사진 자료")
 
     st.write(
-        "JPG, JPEG, PNG, WEBP, HEIC, HEIF 등 "
-        "이미지 파일을 선택할 수 있습니다."
+        "JPG, JPEG, PNG, WEBP, HEIC, HEIF 등 이미지 파일을 "
+        "선택할 수 있습니다."
     )
 
     image_files = st.file_uploader(
@@ -296,7 +305,7 @@ elif menu == "자료관리":
             "bmp"
         ],
         accept_multiple_files=True,
-        key="image_upload"
+        key="image_upload",
     )
 
 
@@ -308,24 +317,9 @@ elif menu == "자료관리":
 
     st.subheader("📊 업로드 현황")
 
-    pdf_count = (
-        len(pdf_files)
-        if pdf_files
-        else 0
-    )
-
-    txt_count = (
-        len(txt_files)
-        if txt_files
-        else 0
-    )
-
-    image_count = (
-        len(image_files)
-        if image_files
-        else 0
-    )
-
+    pdf_count = len(pdf_files) if pdf_files else 0
+    txt_count = len(txt_files) if txt_files else 0
+    image_count = len(image_files) if image_files else 0
 
     col1, col2, col3 = st.columns(3)
 
@@ -352,7 +346,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # PDF 처리
+    # PDF 내용 확인
     # ========================================================
 
     if pdf_files:
@@ -418,8 +412,7 @@ elif menu == "자료관리":
                         )
 
                         st.info(
-                            "스캔 PDF일 가능성이 있습니다. "
-                            "추후 PDF OCR도 연결할 수 있습니다."
+                            "스캔 PDF일 가능성이 있습니다."
                         )
 
 
@@ -435,7 +428,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # TXT 처리
+    # TXT 내용 확인
     # ========================================================
 
     if txt_files:
@@ -451,7 +444,6 @@ elif menu == "자료관리":
                 file.seek(0)
 
                 content_bytes = file.read()
-
 
                 try:
 
@@ -494,14 +486,14 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # 사진 OCR
+    # 이미지 + OCR
     # ========================================================
 
     if image_files:
 
         st.divider()
 
-        st.subheader("📷 사진 OCR")
+        st.subheader("📷 업로드된 사진")
 
         for index, file in enumerate(
             image_files
@@ -512,9 +504,9 @@ elif menu == "자료관리":
                 expanded=True
             ):
 
-                # ------------------------------------------------
+                # --------------------------------------------
                 # 파일 정보
-                # ------------------------------------------------
+                # --------------------------------------------
 
                 col_a, col_b, col_c = st.columns(3)
 
@@ -543,9 +535,9 @@ elif menu == "자료관리":
                     )
 
 
-                # ------------------------------------------------
-                # 이미지 읽기
-                # ------------------------------------------------
+                # --------------------------------------------
+                # 이미지 열기
+                # --------------------------------------------
 
                 try:
 
@@ -553,71 +545,175 @@ elif menu == "자료관리":
 
                     image_bytes = file.read()
 
-                    # 이미지 표시
-                    image = Image.open(
+                    file.seek(0)
+
+                    from PIL import Image
+
+                    pil_img = Image.open(
                         io.BytesIO(image_bytes)
                     )
 
+                    fmt = pil_img.format
+
+                    st.write("**실제 포맷**")
+
+                    st.code(
+                        str(fmt)
+                    )
+
+
                     st.image(
-                        image,
+                        pil_img,
                         caption=file.name,
                         use_container_width=True
                     )
 
 
-                    # ------------------------------------------------
-                    # OCR 실행
-                    # ------------------------------------------------
-
-                    st.markdown(
-                        "#### 🔎 OCR 결과"
+                    st.success(
+                        "사진이 정상적으로 업로드되었습니다."
                     )
 
-                    with st.spinner(
-                        "사진의 글자를 인식하고 있습니다..."
-                    ):
 
-                        ocr_text, ocr_error = run_ocr(
-                            image_bytes
-                        )
+                    # ========================================
+                    # OCR
+                    # ========================================
+
+                    st.markdown("### 🔎 OCR 결과")
 
 
-                    if ocr_error:
+                    if not OCR_SUPPORT:
 
                         st.error(
-                            "OCR 처리 중 오류가 발생했습니다."
+                            "현재 RapidOCR이 설치되지 않았거나 "
+                            "불러오기에 실패했습니다."
                         )
 
-                        st.code(
-                            str(ocr_error)
+                        st.info(
+                            "왼쪽 사이드바의 "
+                            "'🔧 시스템 진단'을 열어 "
+                            "실제 오류를 확인해주세요."
                         )
 
-                    elif ocr_text:
-
-                        st.success(
-                            "OCR이 완료되었습니다."
-                        )
-
-                        st.text_area(
-                            "인식된 텍스트",
-                            ocr_text,
-                            height=400,
-                            key=f"ocr_text_{index}_{file.name}"
-                        )
 
                     else:
 
-                        st.warning(
-                            "사진에서 글자를 찾지 못했습니다."
-                        )
+                        with st.spinner(
+                            "사진에서 글자를 인식하고 있습니다..."
+                        ):
+
+                            ocr_result = run_ocr(
+                                pil_img
+                            )
+
+
+                        # ------------------------------------
+                        # OCR 오류
+                        # ------------------------------------
+
+                        if isinstance(
+                            ocr_result,
+                            dict
+                        ) and "error" in ocr_result:
+
+                            st.error(
+                                "OCR 실행 중 오류가 발생했습니다."
+                            )
+
+                            st.code(
+                                ocr_result["error"]
+                            )
+
+
+                        else:
+
+                            st.write(
+                                "OCR 원본 결과"
+                            )
+
+                            st.write(
+                                ocr_result
+                            )
+
+
+                            # -------------------------------
+                            # 텍스트 추출
+                            # -------------------------------
+
+                            try:
+
+                                ocr_texts = []
+
+                                if hasattr(
+                                    ocr_result,
+                                    "txts"
+                                ):
+
+                                    ocr_texts = (
+                                        ocr_result.txts
+                                    )
+
+                                elif isinstance(
+                                    ocr_result,
+                                    tuple
+                                ):
+
+                                    # RapidOCR 버전에 따라
+                                    # 결과 구조가 다를 수 있음
+
+                                    first = ocr_result[0]
+
+                                    if hasattr(
+                                        first,
+                                        "txts"
+                                    ):
+
+                                        ocr_texts = (
+                                            first.txts
+                                        )
+
+
+                                if ocr_texts:
+
+                                    st.text_area(
+                                        "📝 인식된 텍스트",
+                                        "\n".join(
+                                            ocr_texts
+                                        ),
+                                        height=300,
+                                        key=f"ocr_text_{index}_{file.name}"
+                                    )
+
+                                    st.success(
+                                        f"{len(ocr_texts)}개의 "
+                                        "텍스트 영역을 인식했습니다."
+                                    )
+
+                                else:
+
+                                    st.warning(
+                                        "OCR은 실행되었지만 "
+                                        "인식된 텍스트가 없습니다."
+                                    )
+
+                            except Exception as e:
+
+                                st.warning(
+                                    "OCR 결과에서 텍스트를 "
+                                    "추출하는 과정에서 문제가 발생했습니다."
+                                )
+
+                                st.code(
+                                    repr(e)
+                                )
 
 
                 except Exception as e:
 
-                    st.error(
-                        "사진 처리 중 오류가 발생했습니다."
+                    st.warning(
+                        "파일은 업로드되었지만 "
+                        "이미지를 처리할 수 없습니다."
                     )
 
                     st.code(
-                        str(e)
-                        )
+                        repr(e)
+                    )

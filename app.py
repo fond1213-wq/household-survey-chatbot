@@ -124,11 +124,12 @@ def get_gemini_client():
 
 def call_gemini(
     question: str,
-    model: str = "gemini-2.5-flash-lite",
+    model: str = "gemini-2.5-flash",
     system_prompt: str = None,
 ) -> str:
     """
     Gemini API를 호출하여 답변을 반환합니다.
+    model은 'gemini-2.5-flash' 또는 'models/gemini-2.5-flash' 형식 모두 지원합니다.
     """
     if system_prompt is None:
         system_prompt = (
@@ -152,25 +153,71 @@ def call_gemini(
     return response.text
 
 
-def test_gemini_auth() -> dict:
-    """Gemini API 인증 상태를 테스트합니다."""
+# ============================================================
+# 🔬 진단 함수들
+# ============================================================
+
+def list_gemini_models() -> dict:
+    """사용 가능한 Gemini 모델 목록을 반환합니다."""
     try:
         client = get_gemini_client()
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents="ping",
-        )
-        return {
-            "ok": True,
-            "message": response.text[:100],
-            "error": None,
-        }
+        models = list(client.models.list())
+
+        available = []
+        for m in models:
+            name = getattr(m, "name", "")
+            # generateContent를 지원하는 모델만 필터링
+            if "gemini" in name.lower():
+                available.append(name)
+
+        return {"ok": True, "models": available, "error": None}
     except Exception as e:
-        return {
-            "ok": False,
-            "message": None,
-            "error": repr(e),
-        }
+        return {"ok": False, "models": [], "error": repr(e)}
+
+
+def test_gemini_models() -> dict:
+    """여러 모델명으로 실제 호출을 시도하여 작동하는 모델을 찾습니다."""
+    client = get_gemini_client()
+
+    # 모델명 형식 후보 (models/ 접두사 포함/미포함, 최신 모델명)
+    candidates = [
+        "gemini-2.5-flash",
+        "models/gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "models/gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+        "models/gemini-2.5-pro",
+        "gemini-2.0-flash",
+        "models/gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "models/gemini-2.0-flash-lite",
+    ]
+
+    results = []
+    for model_name in candidates:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents="ping",
+            )
+            results.append({
+                "model": model_name,
+                "ok": True,
+                "message": response.text[:80],
+                "error": None,
+            })
+        except Exception as e:
+            results.append({
+                "model": model_name,
+                "ok": False,
+                "message": None,
+                "error": repr(e)[:200],
+            })
+
+    return {
+        "ok": any(r["ok"] for r in results),
+        "results": results,
+    }
 
 
 # ============================================================
@@ -321,11 +368,14 @@ with st.sidebar:
     st.write("**OCR 지원**")
     if OCR_SUPPORT:
         st.success("✅ RapidOCR v3 지원")
-        st.caption("한국어 인식 모델(korean) 로드 시도")
     else:
         st.error("❌ RapidOCR 지원 안 됨")
 
     st.divider()
+
+    # ========================================================
+    # 🔬 진단 도구
+    # ========================================================
 
     with st.expander("🔧 시스템 진단"):
         st.write("Python 버전")
@@ -350,17 +400,39 @@ with st.sidebar:
             st.code(OCR_ERROR)
 
     st.divider()
+    st.write("**🔬 Gemini 진단 도구**")
 
-    if st.button("🔑 Gemini 인증 테스트", use_container_width=True):
-        with st.spinner("인증 확인 중..."):
-            result = test_gemini_auth()
+    # --- 모델 목록 확인 버튼 ---
+    if st.button("📋 모델 목록 확인", use_container_width=True):
+        with st.spinner("모델 목록 조회 중..."):
+            result = list_gemini_models()
 
         if result["ok"]:
-            st.success("✅ Gemini API 인증 성공")
-            st.caption(f"응답: {result['message']}")
+            st.success(f"총 {len(result['models'])}개 모델 발견")
+            for name in result["models"]:
+                st.code(name)
         else:
-            st.error("❌ Gemini 인증 실패")
+            st.error("모델 목록 조회 실패")
             st.code(result["error"])
+
+    # --- 모델 자동 테스트 버튼 ---
+    if st.button("🔑 모델 자동 테스트", use_container_width=True):
+        with st.spinner("여러 모델로 테스트 중..."):
+            result = test_gemini_models()
+
+        if result["ok"]:
+            st.success("✅ 작동하는 모델을 찾았습니다")
+        else:
+            st.error("❌ 모든 모델 호출 실패")
+
+        for r in result["results"]:
+            if r["ok"]:
+                st.success(f"✅ {r['model']}")
+                st.caption(f"응답: {r['message']}")
+            else:
+                st.warning(f"❌ {r['model']}")
+                with st.expander(f"오류 상세 - {r['model']}"):
+                    st.code(r["error"])
 
 
 # ============================================================
@@ -369,6 +441,25 @@ with st.sidebar:
 
 if menu == "질문하기":
     st.subheader("💬 질문하기")
+
+    # 모델 선택 옵션 (진단 후 확정된 모델명으로 변경 가능)
+    MODEL_OPTIONS = [
+        "gemini-2.5-flash",
+        "models/gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "models/gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+        "models/gemini-2.5-pro",
+        "gemini-2.0-flash",
+        "models/gemini-2.0-flash",
+    ]
+
+    selected_model = st.selectbox(
+        "🤖 사용할 모델",
+        MODEL_OPTIONS,
+        index=0,
+        help="404 오류 발생 시 다른 모델명을 선택해 보세요."
+    )
 
     question = st.text_area(
         "궁금한 내용을 입력하세요.",
@@ -388,9 +479,9 @@ if menu == "질문하기":
 
     if ask_clicked:
         if question.strip():
-            with st.spinner("Gemini가 답변을 생성하고 있습니다..."):
+            with st.spinner(f"{selected_model} 모델로 답변 생성 중..."):
                 try:
-                    answer = call_gemini(question)
+                    answer = call_gemini(question, model=selected_model)
 
                     st.session_state.chat_history.append(
                         {"role": "user", "content": question}
@@ -406,23 +497,18 @@ if menu == "질문하기":
                     st.error("Gemini 호출 중 오류가 발생했습니다.")
                     st.code(repr(e))
 
-                    with st.expander("🔧 인증 오류 진단"):
+                    with st.expander("🔧 오류 진단"):
+                        st.write("사용한 모델:", selected_model)
                         st.write(
                             "키 앞 8자리:",
                             GEMINI_API_KEY[:8] if GEMINI_API_KEY else "없음"
                         )
-                        st.write(
-                            "키 길이:",
-                            len(GEMINI_API_KEY) if GEMINI_API_KEY else 0
-                        )
-                        st.write("모델명: gemini-2.5-flash-lite")
                         st.info(
-                            "401/403 오류가 계속되면:\n"
-                            "1. aistudio.google.com/app/apikey 에서 키가 유효한지 확인\n"
-                            "2. 키를 재발급하고 Streamlit Secrets 업데이트\n"
-                            "3. ⋮ → Reboot app 클릭\n"
-                            "4. Secrets 키 이름이 정확히 GEMINI_API_KEY 인지 확인\n"
-                            "5. 사이드바의 '🔑 Gemini 인증 테스트' 버튼으로 재확인"
+                            "404 오류가 계속되면:\n"
+                            "1. 사이드바의 '📋 모델 목록 확인' 버튼으로 실제 모델명 확인\n"
+                            "2. '🔑 모델 자동 테스트' 버튼으로 작동하는 모델 찾기\n"
+                            "3. 위 선택박스에서 다른 모델명 선택 후 재시도\n"
+                            "4. google-genai 패키지가 최신인지 확인 (>=1.0.0)"
                         )
         else:
             st.warning("질문을 입력해주세요.")

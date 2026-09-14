@@ -98,7 +98,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # PDF
+    # PDF 업로드
     # ========================================================
 
     st.markdown("### 📄 PDF 자료")
@@ -112,7 +112,7 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # TXT
+    # TXT 업로드
     # ========================================================
 
     st.markdown("### 📝 TXT 자료")
@@ -126,36 +126,17 @@ elif menu == "자료관리":
 
 
     # ========================================================
-    # 사진
+    # 사진 업로드
     # ========================================================
 
     st.markdown("### 📷 사진 자료")
 
     image_files = st.file_uploader(
         "사진 파일을 선택하세요.",
-        type=["jpg", "jpeg", "png"],
+        type=["jpg", "jpeg", "png", "webp"],
         accept_multiple_files=True,
         key="image_upload"
     )
-    image_files = st.file_uploader(
-        "사진 파일을 선택하세요.",
-        type=["jpg", "jpeg", "png", "webp", "heic", "heif"],
-        accept_multiple_files=True,
-        key="image_upload"
-    )
-
-    if image_files:
-       st.success(
-         f"사진 {len(image_files)}개가 업로드되었습니다."
-       )
-
-       for file in image_files:
-         st.write(
-            f"파일명: {file.name} / "
-            f"크기: {file.size:,} bytes"
-         )
-    else:
-       st.info("아직 사진이 업로드되지 않았습니다.")
 
 
     # ========================================================
@@ -336,7 +317,6 @@ elif menu == "자료관리":
                     use_container_width=True
                 )
 
-                st.info(
-                    "다음 단계에서 OCR을 연결하여 "
-                    "사진 속 글자를 자동으로 읽습니다."
+                st.success(
+                    f"{file.name} 사진을 정상적으로 업로드했습니다."
                 )

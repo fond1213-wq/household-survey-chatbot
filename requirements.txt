@@ -2,6 +2,6 @@ streamlit
 pypdf
 pillow
 pillow-heif
-rapidocr
+rapidocr==3.7.0
 onnxruntime
 numpy
